@@ -8,6 +8,12 @@ export default function HomeScreen() {
   const scenes = usePracticeStore((state) => state.scenes);
   const activeSceneId = usePracticeStore((state) => state.activeSceneId);
   const setActiveScene = usePracticeStore((state) => state.setActiveScene);
+  const resetSession = usePracticeStore((state) => state.resetSession);
+
+  const handleStartPractice = () => {
+    resetSession();
+    router.push('/practice');
+  };
 
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
@@ -21,7 +27,7 @@ export default function HomeScreen() {
         </View>
       </View>
 
-      <Pressable onPress={() => router.push('/practice')} style={styles.heroButtonWrap}>
+      <Pressable onPress={handleStartPractice} style={styles.heroButtonWrap}>
         <LinearGradient
           colors={['#7C3AED', '#A855F7', '#D946EF']}
           start={{ x: 0, y: 0 }}

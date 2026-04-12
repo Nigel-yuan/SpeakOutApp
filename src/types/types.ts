@@ -1,6 +1,6 @@
 export type PracticeLanguage = 'zh-CN' | 'en-US';
 
-export type RecordingStatus = 'idle' | 'recording' | 'analyzing' | 'finished';
+export type RecordingStatus = 'idle' | 'preparing' | 'recording' | 'analyzing' | 'finished';
 
 export type PracticeSceneKey =
   | 'hosting'

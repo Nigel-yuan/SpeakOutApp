@@ -1,24 +1,58 @@
 import { BlurView } from 'expo-blur';
+import { CameraView, useCameraPermissions } from 'expo-camera';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
+import { useEffect, useRef } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { usePracticeStore } from '../../../src/store/store';
 
 export default function PracticeScreen() {
+  const [permission, requestPermission] = useCameraPermissions();
+  const transcriptScrollRef = useRef<ScrollView>(null);
+  const status = usePracticeStore((state) => state.status);
   const transcript = usePracticeStore((state) => state.transcript);
-  const liveCoach = usePracticeStore((state) => state.liveCoach);
+  const liveCoachInsight = usePracticeStore((state) => state.liveCoachInsight);
+  const setRecordingStatus = usePracticeStore((state) => state.setRecordingStatus);
+  const startRecording = usePracticeStore((state) => state.startRecording);
   const beginAnalyzing = usePracticeStore((state) => state.beginAnalyzing);
+  const isPreparing = status === 'preparing';
+  const canShowLivePanels = status === 'recording';
 
-  const handleFinish = () => {
-    beginAnalyzing();
+  useEffect(() => {
+    requestPermission();
+  }, [requestPermission]);
+
+  useEffect(() => {
+    if (status === 'idle' || status === 'finished') {
+      setRecordingStatus('preparing');
+    }
+  }, [setRecordingStatus, status]);
+
+  useEffect(() => {
+    if (status === 'recording') {
+      transcriptScrollRef.current?.scrollToEnd({ animated: true });
+    }
+  }, [status, transcript]);
+
+  const handleFinish = async () => {
+    await beginAnalyzing();
     router.replace('/report');
   };
 
   return (
     <View style={styles.screen}>
       <View style={styles.cameraStage}>
-        {/* TODO: Insert <Camera> from expo-camera here. */}
+        {permission?.granted ? (
+          <CameraView facing="front" style={StyleSheet.absoluteFillObject} />
+        ) : (
+          <View style={styles.permissionFallback}>
+            <Text style={styles.permissionTitle}>需要相机权限</Text>
+            <Text style={styles.permissionBody}>
+              请允许访问前置摄像头，这样我们才能在整理仪容和正式录制阶段提供实时演讲视图。
+            </Text>
+          </View>
+        )}
       </View>
 
       <LinearGradient
@@ -28,35 +62,54 @@ export default function PracticeScreen() {
       />
 
       <View style={styles.overlay}>
-        <BlurView intensity={42} tint="dark" style={styles.transcriptCard}>
-          <Text style={styles.cardEyebrow}>Live Transcript</Text>
-          <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.transcriptList}>
-            {transcript.map((line) => (
-              <View key={line.id} style={styles.transcriptItem}>
-                <Text style={styles.transcriptSpeaker}>
-                  {line.speaker === 'user' ? '你' : 'AI'} · {(line.timestampMs / 1000).toFixed(1)}s
-                </Text>
-                <Text style={styles.transcriptText}>{line.text}</Text>
-              </View>
-            ))}
-          </ScrollView>
-        </BlurView>
+        {canShowLivePanels ? (
+          <>
+            <BlurView intensity={42} tint="dark" style={styles.transcriptCard}>
+              <Text style={styles.cardEyebrow}>Live Transcript</Text>
+              <ScrollView
+                ref={transcriptScrollRef}
+                showsVerticalScrollIndicator={false}
+                contentContainerStyle={styles.transcriptList}
+                onContentSizeChange={() => transcriptScrollRef.current?.scrollToEnd({ animated: true })}
+              >
+                {transcript.map((line) => (
+                  <View key={line.id} style={styles.transcriptItem}>
+                    <Text style={styles.transcriptSpeaker}>
+                      {line.speaker === 'user' ? '你' : 'AI'} · {(line.timestampMs / 1000).toFixed(1)}s
+                    </Text>
+                    <Text style={styles.transcriptText}>{line.text}</Text>
+                  </View>
+                ))}
+              </ScrollView>
+            </BlurView>
 
-        <BlurView intensity={52} tint="dark" style={styles.coachCard}>
-          <Text style={styles.cardEyebrow}>AI Live Coach</Text>
-          <Text style={styles.coachTitle}>{liveCoach.title}</Text>
-          <Text style={styles.coachBody}>{liveCoach.body}</Text>
-        </BlurView>
+            <BlurView intensity={52} tint="dark" style={styles.coachCard}>
+              <Text style={styles.cardEyebrow}>AI Live Coach</Text>
+              <Text style={styles.coachTitle}>实时点评</Text>
+              <Text style={styles.coachBody}>{liveCoachInsight}</Text>
+            </BlurView>
+          </>
+        ) : (
+          <BlurView intensity={36} tint="dark" style={styles.preparingCard}>
+            <Text style={styles.cardEyebrow}>Preparation</Text>
+            <Text style={styles.preparingTitle}>整理仪容，找到最舒服的镜头状态</Text>
+            <Text style={styles.preparingBody}>
+              调整坐姿、光线和前置摄像头角度，确认你已经准备好进入正式演讲。
+            </Text>
+          </BlurView>
+        )}
 
-        <Pressable onPress={handleFinish} style={styles.actionWrap}>
+        <Pressable onPress={isPreparing ? startRecording : handleFinish} style={styles.actionWrap}>
           <LinearGradient
             colors={['#6D28D9', '#9333EA', '#C026D3']}
             start={{ x: 0, y: 0 }}
             end={{ x: 1, y: 0.9 }}
             style={styles.actionButton}
           >
-            <Text style={styles.actionTitle}>停止并生成报告</Text>
-            <Text style={styles.actionSubtitle}>结束录制，进入 AI 分析结果页</Text>
+            <Text style={styles.actionTitle}>{isPreparing ? '准备完毕' : '停止并生成报告'}</Text>
+            <Text style={styles.actionSubtitle}>
+              {isPreparing ? '整理仪容仪表，调整摄像头视角' : '结束录制，进入 AI 分析结果页'}
+            </Text>
           </LinearGradient>
         </Pressable>
       </View>
@@ -73,6 +126,26 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#050507',
   },
+  permissionFallback: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 28,
+    backgroundColor: '#050507',
+  },
+  permissionTitle: {
+    color: '#FFFFFF',
+    fontSize: 24,
+    fontWeight: '800',
+    textAlign: 'center',
+  },
+  permissionBody: {
+    color: '#D4D4D8',
+    fontSize: 15,
+    lineHeight: 24,
+    textAlign: 'center',
+    marginTop: 12,
+  },
   bottomShade: {
     position: 'absolute',
     left: 0,
@@ -88,8 +161,8 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   transcriptCard: {
-    minHeight: 182,
-    maxHeight: 220,
+    minHeight: 112,
+    maxHeight: 150,
     borderRadius: 24,
     overflow: 'hidden',
     padding: 18,
@@ -104,6 +177,14 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.1)',
     backgroundColor: 'rgba(19, 16, 30, 0.48)',
+  },
+  preparingCard: {
+    borderRadius: 24,
+    overflow: 'hidden',
+    padding: 18,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+    backgroundColor: 'rgba(19, 16, 30, 0.42)',
   },
   cardEyebrow: {
     color: '#A78BFA',
@@ -136,6 +217,17 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   coachBody: {
+    color: '#E4E4E7',
+    fontSize: 15,
+    lineHeight: 24,
+  },
+  preparingTitle: {
+    color: '#FFFFFF',
+    fontSize: 24,
+    fontWeight: '800',
+    marginBottom: 8,
+  },
+  preparingBody: {
     color: '#E4E4E7',
     fontSize: 15,
     lineHeight: 24,

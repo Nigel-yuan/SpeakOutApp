@@ -1,3 +1,4 @@
+import { Audio } from 'expo-av';
 import { create } from 'zustand';
 
 import {
@@ -13,6 +14,9 @@ import {
 } from '../types/types';
 
 const now = '2026-04-11T21:45:00+08:00';
+const API_BASE_URL = (process.env.EXPO_PUBLIC_API_BASE_URL ?? 'http://127.0.0.1:8787').replace(/\/$/, '');
+const RECORDING_SEGMENT_MS = 3000;
+const RECORDING_FILE_TYPE = 'audio/x-m4a';
 
 const sceneCatalog: PracticeScene[] = [
   {
@@ -243,6 +247,55 @@ const reportSeed: ReportData = {
   })),
 };
 
+async function createRecordingSegment() {
+  const recording = new Audio.Recording();
+  await recording.prepareToRecordAsync(Audio.RecordingOptionsPresets.HIGH_QUALITY);
+  await recording.startAsync();
+  return recording;
+}
+
+async function stopAndUnloadRecording(recording: Audio.Recording) {
+  try {
+    await recording.stopAndUnloadAsync();
+  } catch (error) {
+    console.warn('stopAndUnloadRecording failed', error);
+  }
+
+  return recording.getURI();
+}
+
+async function requestBackend<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(`${API_BASE_URL}${path}`, init);
+
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(message || `Request failed with status ${response.status}`);
+  }
+
+  return response.json() as Promise<T>;
+}
+
+async function transcribeRecordingSegment(uri: string, language: PracticeLanguage) {
+  const formData = new FormData();
+  formData.append(
+    'audio_file',
+    {
+      uri,
+      name: `speech-segment-${Date.now()}.m4a`,
+      type: RECORDING_FILE_TYPE,
+    } as never,
+  );
+  formData.append('language', language);
+  formData.append('mime_type', RECORDING_FILE_TYPE);
+
+  const payload = await requestBackend<{ text?: string }>('/api/asr', {
+    method: 'POST',
+    body: formData,
+  });
+
+  return payload.text?.trim() ?? '';
+}
+
 export interface PracticeStoreState {
   status: RecordingStatus;
   activeSceneId: string;
@@ -250,38 +303,46 @@ export interface PracticeStoreState {
   scenes: PracticeScene[];
   history: SpeechRecord[];
   liveCoach: LiveCoachMessage;
+  liveCoachInsight: string;
   transcript: TranscriptLine[];
   currentReport: ReportData | null;
   recordingStartedAt: string | null;
   recordingElapsedMs: number;
   isMicEnabled: boolean;
   isCameraEnabled: boolean;
+  activeRecording: Audio.Recording | null;
+  transcriptionIntervalId: ReturnType<typeof setInterval> | null;
   setActiveScene: (sceneId: string) => void;
   setActiveLanguage: (language: PracticeLanguage) => void;
   setRecordingStatus: (status: RecordingStatus) => void;
   pushTranscriptLine: (line: TranscriptLine) => void;
+  appendTranscriptText: (text: string, speaker?: TranscriptLine['speaker']) => void;
   updateLiveCoach: (message: LiveCoachMessage) => void;
-  startRecording: () => void;
-  stopRecording: () => void;
-  beginAnalyzing: () => void;
+  startRecording: () => Promise<void>;
+  stopRecording: () => Promise<void>;
+  fetchAICoachFeedback: (currentText: string) => Promise<void>;
+  beginAnalyzing: () => Promise<void>;
   finishSession: (report?: ReportData) => void;
   resetSession: () => void;
   hydrateMockSession: () => void;
 }
 
 export const usePracticeStore = create<PracticeStoreState>((set) => ({
-  status: 'idle',
+  status: 'preparing',
   activeSceneId: sceneCatalog[0].id,
   activeLanguage: 'zh-CN',
   scenes: sceneCatalog,
   history: historyRecords,
   liveCoach: liveCoachSeed,
+  liveCoachInsight: liveCoachSeed.body,
   transcript: transcriptSeed,
   currentReport: reportSeed,
   recordingStartedAt: null,
   recordingElapsedMs: 0,
   isMicEnabled: true,
   isCameraEnabled: true,
+  activeRecording: null,
+  transcriptionIntervalId: null,
   setActiveScene: (sceneId) => set({ activeSceneId: sceneId }),
   setActiveLanguage: (language) => set({ activeLanguage: language }),
   setRecordingStatus: (status) => set({ status }),
@@ -289,32 +350,202 @@ export const usePracticeStore = create<PracticeStoreState>((set) => ({
     set((state) => ({
       transcript: [...state.transcript, line],
     })),
-  updateLiveCoach: (message) => set({ liveCoach: message }),
-  startRecording: () =>
+  appendTranscriptText: (text, speaker = 'user') =>
+    set((state) => ({
+      transcript: [
+        ...state.transcript,
+        {
+          id: `line-${Date.now()}`,
+          text,
+          timestampMs: state.recordingStartedAt
+            ? Date.now() - new Date(state.recordingStartedAt).getTime()
+            : 0,
+          confidence: 0.98,
+          speaker,
+        },
+      ],
+    })),
+  updateLiveCoach: (message) => set({ liveCoach: message, liveCoachInsight: message.body }),
+  startRecording: async () => {
+    const { granted } = await Audio.requestPermissionsAsync();
+
+    if (!granted) {
+      set({
+        liveCoach: {
+          id: 'coach-mic-denied',
+          tone: 'analytical',
+          title: '需要麦克风权限',
+          body: '请在系统设置中允许麦克风访问，才能开始实时录音、字幕识别和 AI 教练反馈。',
+          generatedAt: new Date().toISOString(),
+          source: 'system',
+        },
+        liveCoachInsight: '当前未获得麦克风权限，请先在系统设置中授权。',
+      });
+      return;
+    }
+
+    await Audio.setAudioModeAsync({
+      allowsRecordingIOS: true,
+      playsInSilentModeIOS: true,
+      staysActiveInBackground: false,
+      shouldDuckAndroid: true,
+    });
+
+    const firstSegment = await createRecordingSegment();
+    const startedAt = new Date().toISOString();
+    let isRotatingSegment = false;
+
+    const intervalId = setInterval(async () => {
+      if (isRotatingSegment) {
+        return;
+      }
+
+      const state = usePracticeStore.getState();
+      const currentRecording = state.activeRecording;
+
+      if (!currentRecording || state.status !== 'recording') {
+        return;
+      }
+
+      isRotatingSegment = true;
+
+      try {
+        const finishedUri = await stopAndUnloadRecording(currentRecording);
+        const nextSegment = await createRecordingSegment();
+        usePracticeStore.setState({ activeRecording: nextSegment });
+
+        if (finishedUri) {
+          const transcriptText = await transcribeRecordingSegment(finishedUri, state.activeLanguage);
+
+          if (transcriptText) {
+            usePracticeStore.getState().appendTranscriptText(transcriptText, 'user');
+            const fullText = [...usePracticeStore.getState().transcript.map((line) => line.text), transcriptText].join('\n');
+            await usePracticeStore.getState().fetchAICoachFeedback(fullText);
+          }
+        }
+      } catch (error) {
+        console.warn('segment transcription failed', error);
+        usePracticeStore.setState({
+          liveCoachInsight: '实时识别暂时中断，请检查本地代理服务、局域网连接或接口配置。',
+        });
+      } finally {
+        isRotatingSegment = false;
+      }
+    }, RECORDING_SEGMENT_MS);
+
     set({
       status: 'recording',
-      recordingStartedAt: new Date().toISOString(),
+      recordingStartedAt: startedAt,
       recordingElapsedMs: 0,
       currentReport: null,
-    }),
-  stopRecording: () =>
-    set((state) => ({
+      activeRecording: firstSegment,
+      transcriptionIntervalId: intervalId,
+      transcript: [],
+      liveCoach: {
+        id: 'coach-recording',
+        tone: 'encouraging',
+        title: '演讲进行中',
+        body: '麦克风已开启，正在按 3 秒分段识别语音，并把内容发送给 AI 教练。',
+        generatedAt: startedAt,
+        source: 'system',
+      },
+      liveCoachInsight: '录制已开始，等待第一段语音识别结果。',
+    });
+  },
+  stopRecording: async () => {
+    const state = usePracticeStore.getState();
+
+    if (state.transcriptionIntervalId) {
+      clearInterval(state.transcriptionIntervalId);
+    }
+
+    let finalTranscript = '';
+
+    if (state.activeRecording) {
+      const finalUri = await stopAndUnloadRecording(state.activeRecording);
+
+      if (finalUri) {
+        try {
+          finalTranscript = await transcribeRecordingSegment(finalUri, state.activeLanguage);
+        } catch (error) {
+          console.warn('final transcription failed', error);
+        }
+      }
+    }
+
+    if (finalTranscript) {
+      usePracticeStore.getState().appendTranscriptText(finalTranscript, 'user');
+      const fullText = [...usePracticeStore.getState().transcript.map((line) => line.text), finalTranscript].join('\n');
+      await usePracticeStore.getState().fetchAICoachFeedback(fullText);
+    }
+
+    set((currentState) => ({
       status: 'idle',
       recordingStartedAt: null,
-      recordingElapsedMs: state.recordingElapsedMs,
-    })),
-  beginAnalyzing: () =>
+      recordingElapsedMs: currentState.recordingElapsedMs,
+      activeRecording: null,
+      transcriptionIntervalId: null,
+    }));
+  },
+  fetchAICoachFeedback: async (currentText) => {
+    if (!currentText.trim()) {
+      return;
+    }
+
+    try {
+      const state = usePracticeStore.getState();
+      const payload = await requestBackend<{ insight?: string }>('/api/coach', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          text: currentText,
+          language: state.activeLanguage,
+          sceneTitle: state.scenes.find((scene) => scene.id === state.activeSceneId)?.title ?? '演讲训练',
+        }),
+      });
+
+      const insight = payload.insight?.trim();
+
+      if (!insight) {
+        return;
+      }
+
+      set({
+        liveCoachInsight: insight,
+        liveCoach: {
+          id: `coach-${Date.now()}`,
+          tone: 'analytical',
+          title: 'AI Live Coach',
+          body: insight,
+          generatedAt: new Date().toISOString(),
+          source: 'ai',
+        },
+      });
+    } catch (error) {
+      console.warn('fetchAICoachFeedback failed', error);
+      set({
+        liveCoachInsight: 'AI 教练暂时没有返回建议，请检查本地代理服务或 DeepSeek 配置。',
+      });
+    }
+  },
+  beginAnalyzing: async () => {
+    await usePracticeStore.getState().stopRecording();
+
     set({
       status: 'analyzing',
       liveCoach: {
         id: 'coach-analyzing',
         tone: 'analytical',
         title: 'AI 正在生成报告',
-        body: '已完成语音、节奏和镜头状态分析，正在汇总本轮训练总结与下一步建议。',
+        body: '已完成本轮录音收尾，正在整合字幕、节奏与表达表现，准备生成报告。',
         generatedAt: new Date().toISOString(),
         source: 'system',
       },
-    }),
+      liveCoachInsight: '本轮语音已收集完成，正在生成总结报告。',
+    });
+  },
   finishSession: (report = reportSeed) =>
     set({
       status: 'finished',
@@ -327,15 +558,29 @@ export const usePracticeStore = create<PracticeStoreState>((set) => ({
         generatedAt: new Date().toISOString(),
         source: 'system',
       },
+      liveCoachInsight: '本轮训练已完成，报告和建议已经准备好。',
     }),
   resetSession: () =>
-    set({
-      status: 'idle',
-      recordingStartedAt: null,
-      recordingElapsedMs: 0,
-      transcript: [],
-      currentReport: null,
-      liveCoach: liveCoachSeed,
+    set((state) => {
+      if (state.transcriptionIntervalId) {
+        clearInterval(state.transcriptionIntervalId);
+      }
+
+      if (state.activeRecording) {
+        void stopAndUnloadRecording(state.activeRecording);
+      }
+
+      return {
+        status: 'preparing',
+        recordingStartedAt: null,
+        recordingElapsedMs: 0,
+        transcript: [],
+        currentReport: null,
+        liveCoach: liveCoachSeed,
+        liveCoachInsight: liveCoachSeed.body,
+        activeRecording: null,
+        transcriptionIntervalId: null,
+      };
     }),
   hydrateMockSession: () =>
     set({
@@ -344,12 +589,15 @@ export const usePracticeStore = create<PracticeStoreState>((set) => ({
       activeLanguage: 'zh-CN',
       history: historyRecords,
       liveCoach: liveCoachSeed,
+      liveCoachInsight: liveCoachSeed.body,
       transcript: transcriptSeed,
       currentReport: reportSeed,
       recordingStartedAt: null,
       recordingElapsedMs: 164000,
       isMicEnabled: true,
       isCameraEnabled: true,
+      activeRecording: null,
+      transcriptionIntervalId: null,
     }),
 }));
 
