@@ -21,7 +21,28 @@ function polarToCartesian(index: number, total: number, radius: number) {
 }
 
 export default function ReportScreen() {
+  const status = usePracticeStore((state) => state.status);
   const report = usePracticeStore((state) => state.currentReport) ?? practiceStoreMock.reportSeed;
+
+  if (status === 'analyzing') {
+    return (
+      <View style={styles.loadingScreen}>
+        <LinearGradient colors={['#120A16', '#09090C']} style={styles.loadingCard}>
+          <View style={styles.loadingOrb} />
+          <Text style={styles.loadingEyebrow}>Analyzing</Text>
+          <Text style={styles.loadingTitle}>AI 正在深度分析您的演讲表现...</Text>
+          <Text style={styles.loadingBody}>
+            正在综合逐字稿内容、表达节奏与演讲结构，马上为你生成真实评分与行动建议。
+          </Text>
+
+          <View style={styles.loadingSkeleton} />
+          <View style={[styles.loadingSkeleton, styles.loadingSkeletonShort]} />
+          <View style={[styles.loadingSkeleton, styles.loadingSkeletonWide]} />
+        </LinearGradient>
+      </View>
+    );
+  }
+
   const metricKeys = Object.keys(report.radar) as RadarMetricKey[];
 
   const gridPolygons = Array.from({ length: RADAR_LEVELS }, (_, level) => {
@@ -160,6 +181,58 @@ const styles = StyleSheet.create({
   screen: {
     flex: 1,
     backgroundColor: '#09090C',
+  },
+  loadingScreen: {
+    flex: 1,
+    backgroundColor: '#09090C',
+    paddingHorizontal: 20,
+    paddingTop: 84,
+  },
+  loadingCard: {
+    borderRadius: 32,
+    paddingHorizontal: 24,
+    paddingVertical: 28,
+    borderWidth: 1,
+    borderColor: 'rgba(168, 85, 247, 0.18)',
+  },
+  loadingOrb: {
+    width: 84,
+    height: 84,
+    borderRadius: 42,
+    backgroundColor: 'rgba(168, 85, 247, 0.22)',
+    marginBottom: 22,
+  },
+  loadingEyebrow: {
+    color: '#A78BFA',
+    fontSize: 12,
+    letterSpacing: 2.2,
+    textTransform: 'uppercase',
+  },
+  loadingTitle: {
+    color: '#FFFFFF',
+    fontSize: 28,
+    lineHeight: 36,
+    fontWeight: '800',
+    marginTop: 8,
+  },
+  loadingBody: {
+    color: '#D4D4D8',
+    fontSize: 15,
+    lineHeight: 24,
+    marginTop: 12,
+    marginBottom: 28,
+  },
+  loadingSkeleton: {
+    height: 16,
+    borderRadius: 999,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    marginBottom: 12,
+  },
+  loadingSkeletonShort: {
+    width: '72%',
+  },
+  loadingSkeletonWide: {
+    width: '88%',
   },
   content: {
     paddingHorizontal: 20,

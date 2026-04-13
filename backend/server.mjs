@@ -163,6 +163,65 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    if (req.method === 'POST' && url.pathname === '/api/final-report') {
+      const body = await toWebRequest(req).json();
+      const transcript = String(body?.transcript || '');
+      const language = String(body?.language || 'zh-CN');
+      const sceneTitle = String(body?.sceneTitle || '演讲训练');
+
+      if (!transcript.trim()) {
+        sendJson(res, 400, { error: 'transcript is required.' });
+        return;
+      }
+
+      if (!process.env.DEEPSEEK_API_KEY) {
+        sendJson(res, 500, { error: 'Missing DEEPSEEK_API_KEY in .env.' });
+        return;
+      }
+
+      const response = await fetch(`${DEEPSEEK_BASE_URL}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${process.env.DEEPSEEK_API_KEY}`,
+        },
+        body: JSON.stringify({
+          model: process.env.DEEPSEEK_MODEL || 'deepseek-chat',
+          temperature: 0.3,
+          stream: false,
+          messages: [
+            {
+              role: 'system',
+              content:
+                '你是一位专业演讲评委。你必须严格输出 JSON，不要输出 markdown、解释、前后缀文本。JSON 结构为 {"totalScore":number,"summary":string,"radarScores":{"pronunciation":number,"fluency":number,"contentStructure":number,"expressiveness":number,"emotionalResonance":number},"actionableAdvice":[string,string,string]}。所有分数必须是 0 到 100 的整数，actionableAdvice 必须正好 3 条。',
+            },
+            {
+              role: 'user',
+              content: `请分析以下真实演讲逐字稿，并严格按指定 JSON 返回。\n场景：${sceneTitle}\n语言：${language}\n逐字稿：\n${transcript}`,
+            },
+          ],
+        }),
+      });
+
+      const payload = await response.json();
+
+      if (!response.ok) {
+        sendJson(res, response.status, {
+          error: payload?.error?.message || payload?.message || 'DeepSeek final report request failed.',
+        });
+        return;
+      }
+
+      const rawText = extractTextFromOpenAICompatiblePayload(payload);
+      const report = parseJsonBlock(rawText);
+
+      sendJson(res, 200, {
+        report,
+        raw: rawText,
+      });
+      return;
+    }
+
     sendJson(res, 404, { error: 'Not found.' });
   } catch (error) {
     console.error(error);
@@ -249,6 +308,14 @@ function extractTextFromOpenAICompatiblePayload(payload) {
   }
 
   return '';
+}
+
+function parseJsonBlock(text) {
+  const trimmed = text.trim();
+  const fencedMatch = trimmed.match(/```json\s*([\s\S]*?)```/i);
+  const candidate = fencedMatch ? fencedMatch[1].trim() : trimmed;
+
+  return JSON.parse(candidate);
 }
 
 function loadEnvFile(filePath) {

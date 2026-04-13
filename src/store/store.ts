@@ -306,12 +306,15 @@ export interface PracticeStoreState {
   liveCoachInsight: string;
   transcript: TranscriptLine[];
   currentReport: ReportData | null;
+  pendingReport: ReportData | null;
   recordingStartedAt: string | null;
   recordingElapsedMs: number;
+  analysisProgress: number;
   isMicEnabled: boolean;
   isCameraEnabled: boolean;
   activeRecording: Audio.Recording | null;
   transcriptionIntervalId: ReturnType<typeof setInterval> | null;
+  analysisIntervalId: ReturnType<typeof setInterval> | null;
   setActiveScene: (sceneId: string) => void;
   setActiveLanguage: (language: PracticeLanguage) => void;
   setRecordingStatus: (status: RecordingStatus) => void;
@@ -320,7 +323,9 @@ export interface PracticeStoreState {
   updateLiveCoach: (message: LiveCoachMessage) => void;
   startRecording: () => Promise<void>;
   stopRecording: () => Promise<void>;
+  stopRecordingAndGenerateReport: () => Promise<void>;
   fetchAICoachFeedback: (currentText: string) => Promise<void>;
+  fetchFinalReport: (fullTranscript: string) => Promise<void>;
   beginAnalyzing: () => Promise<void>;
   finishSession: (report?: ReportData) => void;
   resetSession: () => void;
@@ -337,12 +342,15 @@ export const usePracticeStore = create<PracticeStoreState>((set) => ({
   liveCoachInsight: liveCoachSeed.body,
   transcript: transcriptSeed,
   currentReport: reportSeed,
+  pendingReport: null,
   recordingStartedAt: null,
   recordingElapsedMs: 0,
+  analysisProgress: 0,
   isMicEnabled: true,
   isCameraEnabled: true,
   activeRecording: null,
   transcriptionIntervalId: null,
+  analysisIntervalId: null,
   setActiveScene: (sceneId) => set({ activeSceneId: sceneId }),
   setActiveLanguage: (language) => set({ activeLanguage: language }),
   setRecordingStatus: (status) => set({ status }),
@@ -487,6 +495,103 @@ export const usePracticeStore = create<PracticeStoreState>((set) => ({
       transcriptionIntervalId: null,
     }));
   },
+  stopRecordingAndGenerateReport: async () => {
+    const state = usePracticeStore.getState();
+
+    if (state.transcriptionIntervalId) {
+      clearInterval(state.transcriptionIntervalId);
+    }
+
+    if (state.analysisIntervalId) {
+      clearInterval(state.analysisIntervalId);
+    }
+
+    if (state.activeRecording) {
+      await stopAndUnloadRecording(state.activeRecording);
+    }
+
+    const fullTranscript = state.transcript
+      .filter((line) => line.speaker === 'user')
+      .map((line) => line.text.trim())
+      .filter(Boolean)
+      .join('\n');
+
+    const progressIntervalId = setInterval(() => {
+      const latestState = usePracticeStore.getState();
+
+      if (latestState.status !== 'analyzing') {
+        clearInterval(progressIntervalId);
+        return;
+      }
+
+      const nextProgress = latestState.pendingReport
+        ? Math.min(100, latestState.analysisProgress + 12)
+        : Math.min(94, latestState.analysisProgress + 7);
+      const adaptiveStep = latestState.pendingReport
+        ? latestState.analysisProgress < 70
+          ? 10
+          : latestState.analysisProgress < 90
+            ? 5
+            : 2
+        : latestState.analysisProgress < 45
+          ? 8
+          : latestState.analysisProgress < 75
+            ? 4
+            : 1;
+      const easedProgress = latestState.pendingReport
+        ? Math.min(100, latestState.analysisProgress + adaptiveStep)
+        : Math.min(94, latestState.analysisProgress + adaptiveStep);
+
+      if (latestState.pendingReport && easedProgress >= 100) {
+        clearInterval(progressIntervalId);
+        usePracticeStore.setState({
+          analysisProgress: 100,
+        });
+        setTimeout(() => {
+          const settledState = usePracticeStore.getState();
+
+          if (!settledState.pendingReport) {
+            return;
+          }
+
+          usePracticeStore.setState({
+            status: 'finished',
+            currentReport: settledState.pendingReport,
+            pendingReport: null,
+            analysisProgress: 100,
+            analysisIntervalId: null,
+            liveCoachInsight: settledState.pendingReport.headline,
+          });
+        }, 200);
+        return;
+      }
+
+      usePracticeStore.setState({
+        analysisProgress: easedProgress,
+      });
+    }, 180);
+
+    set({
+      status: 'analyzing',
+      activeRecording: null,
+      transcriptionIntervalId: null,
+      analysisIntervalId: progressIntervalId,
+      recordingStartedAt: null,
+      pendingReport: null,
+      analysisProgress: 0,
+      liveCoach: {
+        id: 'coach-analyzing',
+        tone: 'analytical',
+        title: 'AI 正在深度分析',
+        body: '已停止录音并释放麦克风，接下来将根据本轮完整逐字稿生成最终报告。',
+        generatedAt: new Date().toISOString(),
+        source: 'system',
+      },
+      liveCoachInsight: 'AI 正在深度分析您的演讲表现...',
+    });
+
+    await usePracticeStore.getState().fetchFinalReport(fullTranscript);
+  },
   fetchAICoachFeedback: async (currentText) => {
     if (!currentText.trim()) {
       return;
@@ -527,6 +632,188 @@ export const usePracticeStore = create<PracticeStoreState>((set) => ({
       console.warn('fetchAICoachFeedback failed', error);
       set({
         liveCoachInsight: 'AI 教练暂时没有返回建议，请检查本地代理服务或 DeepSeek 配置。',
+      });
+    }
+  },
+  fetchFinalReport: async (fullTranscript) => {
+    const state = usePracticeStore.getState();
+
+    if (!fullTranscript.trim()) {
+      set({
+        status: 'finished',
+        currentReport: {
+          ...reportSeed,
+          id: `report-empty-${Date.now()}`,
+          generatedAt: new Date().toISOString(),
+          language: state.activeLanguage,
+          sceneId: state.activeSceneId,
+          sceneTitle: state.scenes.find((scene) => scene.id === state.activeSceneId)?.title ?? reportSeed.sceneTitle,
+          headline: '本轮内容较短，先完成一次完整演讲吧',
+          overview: '当前录制内容不足以生成稳定评分，建议至少完成 20 秒以上的连续表达后再生成报告。',
+          overallScore: 60,
+          scoreTrend: {
+            delta: 0,
+            comparedToLabel: '本轮样本不足',
+          },
+          radar: {
+            pronunciation: 60,
+            fluency: 58,
+            contentStructure: 55,
+            expressiveness: 57,
+            emotionalResonance: 56,
+          },
+          rawMetrics: [
+            { key: 'pronunciation', score: 60 },
+            { key: 'fluency', score: 58 },
+            { key: 'contentStructure', score: 55 },
+            { key: 'expressiveness', score: 57 },
+            { key: 'emotionalResonance', score: 56 },
+          ],
+          highlights: ['录制链路已经跑通，下一步建议延长演讲时长以获得更稳定评估。'],
+          suggestions: defaultSuggestions,
+          coachSummary: '先完成一轮更完整的表达，再让 AI 给出更准确的评分与建议。',
+          comparison: historyRecords.map((record) => ({
+            recordId: record.id,
+            label: record.title,
+            overallScore: record.overallScore,
+          })),
+        },
+      });
+      return;
+    }
+
+    try {
+      const payload = await requestBackend<{
+        report?: {
+          totalScore: number;
+          summary: string;
+          radarScores: {
+            pronunciation: number;
+            fluency: number;
+            contentStructure: number;
+            expressiveness: number;
+            emotionalResonance: number;
+          };
+          actionableAdvice: string[];
+        };
+      }>('/api/final-report', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          transcript: fullTranscript,
+          language: state.activeLanguage,
+          sceneTitle: state.scenes.find((scene) => scene.id === state.activeSceneId)?.title ?? '演讲训练',
+        }),
+      });
+
+      const report = payload.report;
+
+      if (!report) {
+        throw new Error('Missing report payload');
+      }
+
+      const mappedReport: ReportData = {
+        id: `report-${Date.now()}`,
+        generatedAt: new Date().toISOString(),
+        language: state.activeLanguage,
+        sceneId: state.activeSceneId,
+        sceneTitle: state.scenes.find((scene) => scene.id === state.activeSceneId)?.title ?? reportSeed.sceneTitle,
+        headline: report.summary,
+        overview: `本轮综合评分为 ${report.totalScore} 分。AI 已结合完整逐字稿，从发音、流畅度、内容结构、表达力与情感共鸣五个维度完成评估。`,
+        overallScore: report.totalScore,
+        stars: Math.max(1, Math.min(5, Number((report.totalScore / 20).toFixed(1)))),
+        scoreTrend: {
+          delta: report.totalScore - historyRecords[0].overallScore,
+          comparedToLabel: '较最近一次训练',
+        },
+        radar: report.radarScores,
+        radarMeta: reportSeed.radarMeta,
+        rawMetrics: [
+          { key: 'pronunciation', score: report.radarScores.pronunciation },
+          { key: 'fluency', score: report.radarScores.fluency },
+          { key: 'contentStructure', score: report.radarScores.contentStructure },
+          { key: 'expressiveness', score: report.radarScores.expressiveness },
+          { key: 'emotionalResonance', score: report.radarScores.emotionalResonance },
+        ],
+        highlights: [
+          `综合点评：${report.summary}`,
+          `逐字稿总长度约 ${fullTranscript.length} 个字符，已纳入最终分析。`,
+          '本次评分已基于真实演讲文本生成，而非 mock 数据。',
+        ],
+        suggestions: report.actionableAdvice.slice(0, 3).map((detail, index) => ({
+          id: `suggest-final-${index + 1}`,
+          title: `建议 ${index + 1}`,
+          detail,
+          priority: index === 0 ? 'high' : 'medium',
+          metricKey: (['fluency', 'contentStructure', 'expressiveness'][index] ?? 'fluency') as RadarMetricKey,
+        })),
+        coachSummary: report.summary,
+        comparison: historyRecords.map((record) => ({
+          recordId: record.id,
+          label: record.title,
+          overallScore: record.overallScore,
+        })),
+      };
+
+      const latestState = usePracticeStore.getState();
+
+      if (latestState.analysisProgress >= 100) {
+        set({
+          status: 'finished',
+          currentReport: mappedReport,
+          pendingReport: null,
+          analysisProgress: 100,
+          analysisIntervalId: null,
+          liveCoach: {
+            id: `coach-final-${Date.now()}`,
+            tone: 'celebratory',
+            title: '最终报告已生成',
+            body: report.summary,
+            generatedAt: new Date().toISOString(),
+            source: 'ai',
+          },
+          liveCoachInsight: report.summary,
+        });
+        return;
+      }
+
+      set({
+        pendingReport: mappedReport,
+        liveCoach: {
+          id: `coach-final-pending-${Date.now()}`,
+          tone: 'celebratory',
+          title: '最终报告即将完成',
+          body: report.summary,
+          generatedAt: new Date().toISOString(),
+          source: 'ai',
+        },
+      });
+    } catch (error) {
+      console.warn('fetchFinalReport failed', error);
+      const latestState = usePracticeStore.getState();
+
+      if (latestState.analysisIntervalId) {
+        clearInterval(latestState.analysisIntervalId);
+      }
+
+      set({
+        status: 'finished',
+        currentReport: {
+          ...reportSeed,
+          id: `report-fallback-${Date.now()}`,
+          generatedAt: new Date().toISOString(),
+          language: state.activeLanguage,
+          sceneId: state.activeSceneId,
+          sceneTitle: state.scenes.find((scene) => scene.id === state.activeSceneId)?.title ?? reportSeed.sceneTitle,
+          headline: '报告生成遇到波动，已回退到基础评估结果',
+          overview: '最终报告接口暂时未返回有效 JSON，本页显示的是基础兜底报告。建议稍后重新尝试。',
+        },
+        pendingReport: null,
+        analysisProgress: 100,
+        analysisIntervalId: null,
+        liveCoachInsight: '最终报告生成失败，已使用兜底报告展示结果。',
       });
     }
   },
@@ -576,10 +863,13 @@ export const usePracticeStore = create<PracticeStoreState>((set) => ({
         recordingElapsedMs: 0,
         transcript: [],
         currentReport: null,
+        pendingReport: null,
         liveCoach: liveCoachSeed,
         liveCoachInsight: liveCoachSeed.body,
         activeRecording: null,
         transcriptionIntervalId: null,
+        analysisProgress: 0,
+        analysisIntervalId: null,
       };
     }),
   hydrateMockSession: () =>
@@ -592,12 +882,15 @@ export const usePracticeStore = create<PracticeStoreState>((set) => ({
       liveCoachInsight: liveCoachSeed.body,
       transcript: transcriptSeed,
       currentReport: reportSeed,
+      pendingReport: null,
       recordingStartedAt: null,
       recordingElapsedMs: 164000,
+      analysisProgress: 100,
       isMicEnabled: true,
       isCameraEnabled: true,
       activeRecording: null,
       transcriptionIntervalId: null,
+      analysisIntervalId: null,
     }),
 }));
 
