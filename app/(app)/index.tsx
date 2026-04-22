@@ -69,6 +69,7 @@ export default function HomeScreen() {
                 {scene.isRecommended ? <Text style={styles.recommendedBadge}>推荐</Text> : null}
               </View>
               <Text style={styles.sceneSubtitle}>{scene.subtitle}</Text>
+              <Text style={styles.sceneGoal}>{scene.goal}</Text>
               <Text style={styles.sceneDescription}>{scene.description}</Text>
               <View style={styles.tagRow}>
                 {scene.tags.map((tag) => (
@@ -227,6 +228,13 @@ const styles = StyleSheet.create({
     fontSize: 14,
     lineHeight: 22,
     marginTop: 10,
+  },
+  sceneGoal: {
+    color: '#F5F3FF',
+    fontSize: 15,
+    lineHeight: 22,
+    marginTop: 10,
+    fontWeight: '600',
   },
   recommendedBadge: {
     color: '#F5F3FF',

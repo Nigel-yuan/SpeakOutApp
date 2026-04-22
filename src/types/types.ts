@@ -4,25 +4,28 @@ export type RecordingStatus = 'idle' | 'preparing' | 'recording' | 'analyzing' |
 
 export type PracticeSceneKey =
   | 'hosting'
-  | 'guest-sharing'
+  | 'presentation'
   | 'impromptu'
-  | 'pitching'
-  | 'storytelling';
+  | 'briefing-defense'
+  | 'interview-pitch';
 
 export type RadarMetricKey =
-  | 'pronunciation'
-  | 'fluency'
   | 'contentStructure'
-  | 'expressiveness'
-  | 'emotionalResonance';
+  | 'languageExpression'
+  | 'fluencyRhythm'
+  | 'vocalDelivery'
+  | 'nonverbalPresence'
+  | 'audienceImpact';
 
 export interface PracticeScene {
   id: string;
   key: PracticeSceneKey;
   title: string;
   subtitle: string;
+  goal: string;
   description: string;
   tags: string[];
+  focusKeywords: string[];
   accentColor: [string, string];
   supportedLanguages: PracticeLanguage[];
   difficulty: 'beginner' | 'intermediate' | 'advanced';

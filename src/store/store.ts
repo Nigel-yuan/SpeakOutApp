@@ -22,11 +22,13 @@ const sceneCatalog: PracticeScene[] = [
   {
     id: 'host-cn',
     key: 'hosting',
-    title: '主持人场景',
-    subtitle: '控场、引导、节奏推进',
+    title: '主持（Host）',
+    subtitle: '控场、互动、转场、节奏、感染力',
+    goal: '建立场域、推进流程、带动听众',
     description:
-      '适合发布会、活动串场与舞台主持，重点训练镜头感、节奏推进和自然转场。',
-    tags: ['控场', '引导', '节奏推进'],
+      '适合发布会、活动串场与舞台主持，强调控场自然度、互动意识、流程推进与声音带动感。',
+    tags: ['控场', '互动', '转场'],
+    focusKeywords: ['控场节奏', '互动意识', '转场自然度', '声音带动感'],
     accentColor: ['#8B5CF6', '#D946EF'],
     supportedLanguages: ['zh-CN', 'en-US'],
     difficulty: 'intermediate',
@@ -35,13 +37,15 @@ const sceneCatalog: PracticeScene[] = [
     isRecommended: true,
   },
   {
-    id: 'guest-en',
-    key: 'guest-sharing',
-    title: '嘉宾分享场景',
-    subtitle: '观点表达、故事讲述、逻辑递进',
+    id: 'presentation-core',
+    key: 'presentation',
+    title: '主题分享（Presentation）',
+    subtitle: '结构、解释、支撑、重点、总结',
+    goal: '讲清楚一个主题并帮助听众理解',
     description:
-      '面向专题分享与访谈表达，强调结构组织、论点落地和信息密度。',
-    tags: ['故事讲述', '逻辑递进', '英文表达'],
+      '适合课程讲解、产品介绍与主题演讲，强调主题清楚、结构严密、解释充分和重点鲜明。',
+    tags: ['结构组织', '解释能力', '重点突出'],
+    focusKeywords: ['结构清晰度', '解释能力', '重点突出程度', '总结质量'],
     accentColor: ['#6D28D9', '#9333EA'],
     supportedLanguages: ['zh-CN', 'en-US'],
     difficulty: 'advanced',
@@ -51,16 +55,50 @@ const sceneCatalog: PracticeScene[] = [
   {
     id: 'impromptu-cn',
     key: 'impromptu',
-    title: '脱口秀场景',
-    subtitle: '节奏、停顿、包袱与现场反馈',
+    title: '即兴表达（Impromptu）',
+    subtitle: '反应、连贯、自然、稳定、结论',
+    goal: '快速自然地组织输出并保持稳定',
     description:
-      '用于训练即兴表达、幽默节奏和高压状态下的持续输出能力。',
-    tags: ['节奏', '停顿', '互动反馈'],
+      '适用于临场发言、即兴回答与短时表达训练，重点关注起步速度、卡顿情况与即时组织能力。',
+    tags: ['起步速度', '稳定输出', '结论收束'],
+    focusKeywords: ['起步速度', '卡顿情况', '即时组织能力', '自然稳定度'],
     accentColor: ['#7C3AED', '#A855F7'],
     supportedLanguages: ['zh-CN'],
     difficulty: 'advanced',
     estimatedDurationSec: 150,
     coverVariant: 'midnight-lens',
+  },
+  {
+    id: 'briefing-defense',
+    key: 'briefing-defense',
+    title: '汇报答辩（Briefing & Defense）',
+    subtitle: '结论、论证、准确、回应、专业性',
+    goal: '高效准确地完成正式陈述与问题回应',
+    description:
+      '适用于工作汇报、项目答辩和正式陈述，强调结论导向、论证完整性与专业表达准确性。',
+    tags: ['结论导向', '论证完整', '专业表达'],
+    focusKeywords: ['结论导向', '论证完整性', '回应针对性', '专业表达准确性'],
+    accentColor: ['#4C1D95', '#7C3AED'],
+    supportedLanguages: ['zh-CN', 'en-US'],
+    difficulty: 'advanced',
+    estimatedDurationSec: 210,
+    coverVariant: 'briefing-grid',
+  },
+  {
+    id: 'interview-pitch',
+    key: 'interview-pitch',
+    title: '面试 / Pitch',
+    subtitle: '定位、亮点、简洁、自信、记忆点',
+    goal: '快速建立形象并形成说服力',
+    description:
+      '适用于自我介绍、面试表达与商业 Pitch，强调亮点形成、表达精炼、自信感与记忆点。',
+    tags: ['第一印象', '亮点表达', '说服力'],
+    focusKeywords: ['自我定位', '内容精炼度', '亮点形成', '自信感与说服力'],
+    accentColor: ['#9333EA', '#E879F9'],
+    supportedLanguages: ['zh-CN', 'en-US'],
+    difficulty: 'intermediate',
+    estimatedDurationSec: 180,
+    coverVariant: 'pitch-spark',
   },
 ];
 
@@ -68,40 +106,39 @@ const historyRecords: SpeechRecord[] = [
   {
     id: 'record-2026-04-09-host',
     sceneId: 'host-cn',
-    sceneTitle: '主持人场景',
-    title: '上周三 · 中文主持',
+    sceneTitle: '???Host?',
+    title: '??? ? ????',
     language: 'zh-CN',
     createdAt: '2026-04-09T19:30:00+08:00',
     durationSec: 196,
     overallScore: 76,
     scoreDelta: 4,
     summary:
-      '开场自然，但在串联环节上略有停顿，和嘉宾互动时还有进一步放松的空间。',
+      '?????????????????????????????????????????????????',
     metricChanges: [
-      { key: 'stagePresence', label: '控场', delta: 8 },
-      { key: 'interaction', label: '互动', delta: 6 },
-      { key: 'pacing', label: '节奏', delta: -2 },
+      { key: 'audienceImpact', label: '????', delta: 8 },
+      { key: 'nonverbalPresence', label: '????', delta: 6 },
+      { key: 'fluencyRhythm', label: '????', delta: -2 },
     ],
-    previewTranscript:
-      '大家晚上好，欢迎来到今天的年度分享会，我们先用一个小故事把主题带出来。',
+    previewTranscript: '???????????????????????????????????',
     reportId: 'report-2026-04-09-host',
   },
   {
     id: 'record-2026-04-07-guest',
-    sceneId: 'guest-en',
-    sceneTitle: '嘉宾分享场景',
-    title: '上周五 · English sharing',
+    sceneId: 'presentation-core',
+    sceneTitle: '?????Presentation?',
+    title: '??? ? English sharing',
     language: 'en-US',
     createdAt: '2026-04-07T20:15:00+08:00',
     durationSec: 224,
     overallScore: 81,
     scoreDelta: 7,
     summary:
-      '观点层次清楚，英文表达稳定，但结尾的号召力还可以更强。',
+      '???????????????????????????????????????',
     metricChanges: [
-      { key: 'logic', label: '逻辑', delta: 7 },
-      { key: 'delivery', label: '表达', delta: 4 },
-      { key: 'fluency', label: '收束', delta: -1 },
+      { key: 'contentStructure', label: '????', delta: 7 },
+      { key: 'languageExpression', label: '????', delta: 4 },
+      { key: 'audienceImpact', label: '?????', delta: -1 },
     ],
     previewTranscript:
       'Today I want to share one key lesson from building under pressure: clarity wins attention.',
@@ -110,22 +147,21 @@ const historyRecords: SpeechRecord[] = [
   {
     id: 'record-2026-04-11-impromptu',
     sceneId: 'impromptu-cn',
-    sceneTitle: '脱口秀场景',
-    title: '本周一 · 脱口秀试讲',
+    sceneTitle: '?????Impromptu?',
+    title: '??? ? ??????',
     language: 'zh-CN',
     createdAt: '2026-04-11T18:40:00+08:00',
     durationSec: 143,
     overallScore: 73,
     scoreDelta: 2,
     summary:
-      '笑点前的铺垫做得不错，不过包袱落点略快，观众反应区间偏短。',
+      '???????????????????????????????????????????',
     metricChanges: [
-      { key: 'pacing', label: '节奏', delta: 5 },
-      { key: 'delivery', label: '表现力', delta: 3 },
-      { key: 'pauseControl', label: '停顿', delta: -4 },
+      { key: 'fluencyRhythm', label: '????', delta: 5 },
+      { key: 'audienceImpact', label: '????', delta: 3 },
+      { key: 'contentStructure', label: '????', delta: -4 },
     ],
-    previewTranscript:
-      '我发现成年人最擅长的一件事，就是明明没空，还要把日程排得像自己很自由。',
+    previewTranscript: '???????????????????????????????????',
     reportId: 'report-2026-04-11-impromptu',
   },
 ];
@@ -164,7 +200,7 @@ const defaultSuggestions: ReportSuggestion[] = [
     detail:
       '在抛出问题前多留 0.5 秒停顿，可以让嘉宾和观众更好地跟上节奏。',
     priority: 'high',
-    metricKey: 'contentStructure',
+    metricKey: 'fluencyRhythm',
   },
   {
     id: 'suggest-2',
@@ -172,7 +208,7 @@ const defaultSuggestions: ReportSuggestion[] = [
     detail:
       '介绍嘉宾或活动亮点时，把关键名词重读，会让信息更有记忆点。',
     priority: 'medium',
-    metricKey: 'fluency',
+    metricKey: 'vocalDelivery',
   },
   {
     id: 'suggest-3',
@@ -180,16 +216,17 @@ const defaultSuggestions: ReportSuggestion[] = [
     detail:
       '你的控场已经很自然，下一步可以加入一句简短追问，让现场交流更有层次。',
     priority: 'medium',
-    metricKey: 'expressiveness',
+    metricKey: 'audienceImpact',
   },
 ];
 
 const metricOrder: RadarMetricKey[] = [
-  'pronunciation',
-  'fluency',
   'contentStructure',
-  'expressiveness',
-  'emotionalResonance',
+  'languageExpression',
+  'fluencyRhythm',
+  'vocalDelivery',
+  'nonverbalPresence',
+  'audienceImpact',
 ];
 
 const reportSeed: ReportData = {
@@ -198,10 +235,10 @@ const reportSeed: ReportData = {
   generatedAt: now,
   language: 'zh-CN',
   sceneId: 'host-cn',
-  sceneTitle: '主持人场景',
-  headline: '你已经有很强的主持松弛感',
+  sceneTitle: '主持（Host）',
+  headline: '你已经具备成熟主持的控场意识与听众带动感',
   overview:
-    '这一轮里，你的开场状态稳定，能够快速把观众带进节奏，整体呈现比历史记录更从容。',
+    '这一轮里，你的开场吸引力和流程推进都比较稳定，能较快把听众带进节奏，整体呈现具备明显的主持场域感。',
   overallScore: 85,
   stars: 4.5,
   scoreTrend: {
@@ -209,23 +246,25 @@ const reportSeed: ReportData = {
     comparedToLabel: '较上次同场景练习',
   },
   radar: {
-    pronunciation: 90,
-    fluency: 85,
-    contentStructure: 88,
-    expressiveness: 75,
-    emotionalResonance: 92,
+    contentStructure: 78,
+    languageExpression: 80,
+    fluencyRhythm: 88,
+    vocalDelivery: 90,
+    nonverbalPresence: 84,
+    audienceImpact: 92,
   },
   radarMeta: {
-    pronunciation: { label: '发音', shortLabel: '发音', description: '吐字与咬字清晰度' },
-    fluency: { label: '流利度', shortLabel: '流利', description: '语速、停顿与自然衔接' },
-    contentStructure: { label: '内容结构', shortLabel: '结构', description: '信息组织与层次推进' },
-    expressiveness: { label: '表达力', shortLabel: '表达', description: '语气变化与镜头张力' },
-    emotionalResonance: { label: '情感共鸣', shortLabel: '共鸣', description: '感染力与观众连接' },
+    contentStructure: { label: '内容结构', shortLabel: '结构', description: '主题是否明确、逻辑是否完整、结尾是否收束' },
+    languageExpression: { label: '语言表达', shortLabel: '语言', description: '用词准确性、表达简洁性与语言得体度' },
+    fluencyRhythm: { label: '流利度与节奏', shortLabel: '节奏', description: '表达连贯性、语速与停顿控制' },
+    vocalDelivery: { label: '语音表现', shortLabel: '语音', description: '发音清晰度、音量稳定性与语调变化度' },
+    nonverbalPresence: { label: '非语言呈现', shortLabel: '台风', description: '眼神、表情、姿态与手势的协调度' },
+    audienceImpact: { label: '听众感与影响力', shortLabel: '影响力', description: '互动意识、带动感、说服力与记忆点' },
   },
   highlights: [
-    '破冰速度快，前 20 秒就建立了轻松氛围。',
-    '切换议题时衔接自然，没有明显卡顿。',
-    '眼神和微笑配合更稳定，镜头亲和力提升明显。',
+    '开场吸引力不错，前段较快完成场域建立。',
+    '转场语气自然，流程推进感比较清晰。',
+    '声音带动感和镜头交流明显优于上一轮。',
   ],
   suggestions: defaultSuggestions,
   coachSummary:
@@ -238,11 +277,12 @@ const reportSeed: ReportData = {
   rawMetrics: metricOrder.map((key) => ({
     key,
     score: {
-      pronunciation: 90,
-      fluency: 85,
-      contentStructure: 88,
-      expressiveness: 75,
-      emotionalResonance: 92,
+      contentStructure: 78,
+      languageExpression: 80,
+      fluencyRhythm: 88,
+      vocalDelivery: 90,
+      nonverbalPresence: 84,
+      audienceImpact: 92,
     }[key],
   })),
 };
@@ -607,7 +647,9 @@ export const usePracticeStore = create<PracticeStoreState>((set) => ({
         body: JSON.stringify({
           text: currentText,
           language: state.activeLanguage,
-          sceneTitle: state.scenes.find((scene) => scene.id === state.activeSceneId)?.title ?? '演讲训练',
+          sceneTitle: state.scenes.find((scene) => scene.id === state.activeSceneId)?.title ?? '????',
+          sceneGoal: state.scenes.find((scene) => scene.id === state.activeSceneId)?.goal ?? '???????????',
+          focusKeywords: state.scenes.find((scene) => scene.id === state.activeSceneId)?.focusKeywords ?? [],
         }),
       });
 
@@ -656,18 +698,20 @@ export const usePracticeStore = create<PracticeStoreState>((set) => ({
             comparedToLabel: '本轮样本不足',
           },
           radar: {
-            pronunciation: 60,
-            fluency: 58,
             contentStructure: 55,
-            expressiveness: 57,
-            emotionalResonance: 56,
+            languageExpression: 58,
+            fluencyRhythm: 57,
+            vocalDelivery: 60,
+            nonverbalPresence: 56,
+            audienceImpact: 54,
           },
           rawMetrics: [
-            { key: 'pronunciation', score: 60 },
-            { key: 'fluency', score: 58 },
             { key: 'contentStructure', score: 55 },
-            { key: 'expressiveness', score: 57 },
-            { key: 'emotionalResonance', score: 56 },
+            { key: 'languageExpression', score: 58 },
+            { key: 'fluencyRhythm', score: 57 },
+            { key: 'vocalDelivery', score: 60 },
+            { key: 'nonverbalPresence', score: 56 },
+            { key: 'audienceImpact', score: 54 },
           ],
           highlights: ['录制链路已经跑通，下一步建议延长演讲时长以获得更稳定评估。'],
           suggestions: defaultSuggestions,
@@ -688,11 +732,12 @@ export const usePracticeStore = create<PracticeStoreState>((set) => ({
           totalScore: number;
           summary: string;
           radarScores: {
-            pronunciation: number;
-            fluency: number;
             contentStructure: number;
-            expressiveness: number;
-            emotionalResonance: number;
+            languageExpression: number;
+            fluencyRhythm: number;
+            vocalDelivery: number;
+            nonverbalPresence: number;
+            audienceImpact: number;
           };
           actionableAdvice: string[];
         };
@@ -721,7 +766,7 @@ export const usePracticeStore = create<PracticeStoreState>((set) => ({
         sceneId: state.activeSceneId,
         sceneTitle: state.scenes.find((scene) => scene.id === state.activeSceneId)?.title ?? reportSeed.sceneTitle,
         headline: report.summary,
-        overview: `本轮综合评分为 ${report.totalScore} 分。AI 已结合完整逐字稿，从发音、流畅度、内容结构、表达力与情感共鸣五个维度完成评估。`,
+        overview: `??????? ${report.totalScore} ??AI ?????????? Speak Up ?????????????????????????????????????????????????`,
         overallScore: report.totalScore,
         stars: Math.max(1, Math.min(5, Number((report.totalScore / 20).toFixed(1)))),
         scoreTrend: {
@@ -731,23 +776,26 @@ export const usePracticeStore = create<PracticeStoreState>((set) => ({
         radar: report.radarScores,
         radarMeta: reportSeed.radarMeta,
         rawMetrics: [
-          { key: 'pronunciation', score: report.radarScores.pronunciation },
-          { key: 'fluency', score: report.radarScores.fluency },
           { key: 'contentStructure', score: report.radarScores.contentStructure },
-          { key: 'expressiveness', score: report.radarScores.expressiveness },
-          { key: 'emotionalResonance', score: report.radarScores.emotionalResonance },
+          { key: 'languageExpression', score: report.radarScores.languageExpression },
+          { key: 'fluencyRhythm', score: report.radarScores.fluencyRhythm },
+          { key: 'vocalDelivery', score: report.radarScores.vocalDelivery },
+          { key: 'nonverbalPresence', score: report.radarScores.nonverbalPresence },
+          { key: 'audienceImpact', score: report.radarScores.audienceImpact },
         ],
         highlights: [
           `综合点评：${report.summary}`,
-          `逐字稿总长度约 ${fullTranscript.length} 个字符，已纳入最终分析。`,
-          '本次评分已基于真实演讲文本生成，而非 mock 数据。',
+          `本次为「${state.scenes.find((scene) => scene.id === state.activeSceneId)?.title ?? '当前场景'}」专项评估。`,
+          `逐字稿总长度约 ${fullTranscript.length} 个字符，已纳入场景化评分分析。`,
         ],
         suggestions: report.actionableAdvice.slice(0, 3).map((detail, index) => ({
           id: `suggest-final-${index + 1}`,
           title: `建议 ${index + 1}`,
           detail,
           priority: index === 0 ? 'high' : 'medium',
-          metricKey: (['fluency', 'contentStructure', 'expressiveness'][index] ?? 'fluency') as RadarMetricKey,
+          metricKey: (
+            ['contentStructure', 'fluencyRhythm', 'audienceImpact'][index] ?? 'contentStructure'
+          ) as RadarMetricKey,
         })),
         coachSummary: report.summary,
         comparison: historyRecords.map((record) => ({

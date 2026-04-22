@@ -111,7 +111,12 @@ const server = createServer(async (req, res) => {
       const body = await toWebRequest(req).json();
       const text = String(body?.text || '');
       const language = String(body?.language || 'zh-CN');
-      const sceneTitle = String(body?.sceneTitle || '演讲训练');
+      const sceneTitle = String(body?.sceneTitle || '????');
+      const sceneGoal = String(body?.sceneGoal || '???????????');
+      const focusKeywords = Array.isArray(body?.focusKeywords)
+        ? body.focusKeywords.map((item) => String(item)).filter(Boolean)
+        : [];
+      const recentTranscript = text.trim().split(/\n+/).slice(-3).join('\n');
 
       if (!text.trim()) {
         sendJson(res, 400, { error: 'text is required.' });
@@ -131,17 +136,24 @@ const server = createServer(async (req, res) => {
         },
         body: JSON.stringify({
           model: process.env.DEEPSEEK_MODEL || 'deepseek-chat',
-          temperature: 0.7,
+          temperature: 0.55,
           stream: false,
           messages: [
             {
               role: 'system',
               content:
-                '你是一位实时演讲教练。请只返回一句中文建议，要求具体、温和、可立即执行，不要分点。',
+                '?? Speak Up ???? AI ?????????? Speak Up ????????????? 1 ?????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????????',
             },
             {
               role: 'user',
-              content: `场景：${sceneTitle}\n语言：${language}\n最新演讲文本：\n${text}`,
+              content: `???${sceneTitle}
+?????${sceneGoal}
+?????${focusKeywords.join('?') || '????????????'}
+???${language}
+????????
+${recentTranscript}
+
+?????????????????????????`,
             },
           ],
         }),
@@ -193,11 +205,11 @@ const server = createServer(async (req, res) => {
             {
               role: 'system',
               content:
-                '你是一位专业演讲评委。你必须严格输出 JSON，不要输出 markdown、解释、前后缀文本。JSON 结构为 {"totalScore":number,"summary":string,"radarScores":{"pronunciation":number,"fluency":number,"contentStructure":number,"expressiveness":number,"emotionalResonance":number},"actionableAdvice":[string,string,string]}。所有分数必须是 0 到 100 的整数，actionableAdvice 必须正好 3 条。',
+                '你是一位专业演讲评委，严格采用 Speak Up 场景化演讲评价体系。你必须严格输出 JSON，不要输出 markdown、解释、前后缀文本。JSON 结构为 {"totalScore":number,"summary":string,"radarScores":{"contentStructure":number,"languageExpression":number,"fluencyRhythm":number,"vocalDelivery":number,"nonverbalPresence":number,"audienceImpact":number},"actionableAdvice":[string,string,string]}。所有分数必须是 0 到 100 的整数，actionableAdvice 必须正好 3 条。请根据不同场景的重点进行权重判断：主持更重听众感与影响力、流利度与节奏、语音表现；主题分享更重内容结构与语言表达；即兴表达更重流利度与节奏、内容结构；汇报答辩更重内容结构、语言表达、回应针对性；面试/Pitch 更重听众感与影响力、语言表达、内容结构。',
             },
             {
               role: 'user',
-              content: `请分析以下真实演讲逐字稿，并严格按指定 JSON 返回。\n场景：${sceneTitle}\n语言：${language}\n逐字稿：\n${transcript}`,
+              content: `请基于 Speak Up 场景化演讲评价体系分析以下真实演讲逐字稿，并严格按指定 JSON 返回。\n场景：${sceneTitle}\n语言：${language}\n统一六维：内容结构、语言表达、流利度与节奏、语音表现、非语言呈现、听众感与影响力。\n请特别关注该场景的任务目标、常见低分风险与反馈重点。\n逐字稿：\n${transcript}`,
             },
           ],
         }),

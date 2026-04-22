@@ -84,7 +84,7 @@ export default function ReportScreen() {
 
       <BlurView intensity={36} tint="dark" style={styles.radarCard}>
         <Text style={styles.sectionEyebrow}>Core Ability Map</Text>
-        <Text style={styles.sectionTitle}>核心能力分布</Text>
+        <Text style={styles.sectionTitle}>六维核心能力分布</Text>
 
         <View style={styles.radarWrap}>
           <Svg width={RADAR_SIZE} height={RADAR_SIZE}>
@@ -159,7 +159,7 @@ export default function ReportScreen() {
 
       <View style={styles.suggestionSection}>
         <Text style={styles.sectionEyebrow}>Action Plan</Text>
-        <Text style={styles.sectionTitle}>下一轮可以重点打磨的地方</Text>
+        <Text style={styles.sectionTitle}>场景化改进建议</Text>
 
         {report.suggestions.map((suggestion, index) => (
           <BlurView key={suggestion.id} intensity={28} tint="dark" style={styles.suggestionCard}>
