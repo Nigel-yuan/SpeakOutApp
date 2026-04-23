@@ -1,0 +1,2016 @@
+﻿import { Audio } from 'expo-av';
+import { create } from 'zustand';
+
+import {
+  type CoachChatMessage,
+  type CoachDimensionId,
+  type CoachDimensionState,
+  type CoachDisplayStatus,
+  type CoachPanelState,
+  type LiveCoachMessage,
+  type PracticeLanguage,
+  type PracticeScene,
+  type QAPhase,
+  type RadarMetricKey,
+  type RecordingStatus,
+  type ReportData,
+  type ReportSuggestion,
+  type SpeechRecord,
+  type TranscriptLine,
+} from '../types/types';
+
+const now = '2026-04-22T21:45:00+08:00';
+const API_BASE_URL = (process.env.EXPO_PUBLIC_API_BASE_URL ?? 'http://127.0.0.1:8787').replace(/\/$/, '');
+const RECORDING_SEGMENT_MS = 2000;
+const RECORDING_FILE_TYPE = 'audio/x-m4a';
+const QA_AUTO_ADVANCE_MS = 1400;
+const VOICE_CONTENT_SILENCE_WINDOW_MS = 2200;
+const VOICE_CONTENT_BUFFER_LIMIT = 2;
+
+type CoachLaneScope = 'voice_content' | 'body_visual';
+type BufferedVoiceSegment = {
+  uri: string;
+  transcript: string;
+  createdAt: string;
+};
+const PARTIAL_FILLER_TOKENS = {
+  'zh-CN': new Set(['鍡?, '鍟?, '鍛?, '鐒跺悗', '灏辨槸', '閭ｄ釜', '鍏跺疄']),
+  'en-US': new Set(['um', 'uh', 'well', 'so', 'like']),
+};
+
+const sceneCatalog: PracticeScene[] = [
+  {
+    id: 'host-cn',
+    key: 'hosting',
+    title: '涓绘寔锛圚ost锛?,
+    subtitle: '鎺у満銆佷簰鍔ㄣ€佽浆鍦恒€佽妭濂忋€佹劅鏌撳姏',
+    goal: '寤虹珛鍦哄煙銆佹帹杩涙祦绋嬨€佸甫鍔ㄥ惉浼?,
+    description: '閫傚悎娲诲姩涓绘寔銆佸彂甯冧細涓插満涓庤垶鍙板紑鍦猴紝寮鸿皟鎺у満鑷劧搴︺€佷簰鍔ㄦ剰璇嗕笌澹伴煶甯﹀姩鎰熴€?,
+    tags: ['鎺у満', '浜掑姩', '杞満'],
+    focusKeywords: ['鎺у満鑺傚', '浜掑姩鎰忚瘑', '杞満鑷劧搴?, '澹伴煶甯﹀姩鎰?],
+    accentColor: ['#8B5CF6', '#D946EF'],
+    supportedLanguages: ['zh-CN', 'en-US'],
+    difficulty: 'intermediate',
+    estimatedDurationSec: 180,
+    coverVariant: 'violet-stage',
+    isRecommended: true,
+  },
+  {
+    id: 'presentation-core',
+    key: 'presentation',
+    title: '涓婚鍒嗕韩锛圥resentation锛?,
+    subtitle: '缁撴瀯銆佽В閲娿€佹敮鎾戙€侀噸鐐广€佹€荤粨',
+    goal: '璁叉竻妤氫竴涓富棰樺苟甯姪鍚紬鐞嗚В',
+    description: '閫傚悎璇剧▼璁茶В銆佷骇鍝佷粙缁嶄笌涓婚婕旇锛屽己璋冪粨鏋勬竻鏅般€侀噸鐐圭獊鍑轰笌瑙ｉ噴鑳藉姏銆?,
+    tags: ['缁撴瀯缁勭粐', '瑙ｉ噴鑳藉姏', '閲嶇偣绐佸嚭'],
+    focusKeywords: ['缁撴瀯娓呮櫚搴?, '瑙ｉ噴鑳藉姏', '閲嶇偣绐佸嚭绋嬪害', '鎬荤粨璐ㄩ噺'],
+    accentColor: ['#6D28D9', '#9333EA'],
+    supportedLanguages: ['zh-CN', 'en-US'],
+    difficulty: 'advanced',
+    estimatedDurationSec: 240,
+    coverVariant: 'nebula-glow',
+  },
+  {
+    id: 'impromptu-cn',
+    key: 'impromptu',
+    title: '鍗冲叴琛ㄨ揪锛圛mpromptu锛?,
+    subtitle: '鍙嶅簲銆佽繛璐€佽嚜鐒躲€佺ǔ瀹氥€佺粨璁?,
+    goal: '蹇€熻嚜鐒跺湴缁勭粐杈撳嚭骞朵繚鎸佺ǔ瀹?,
+    description: '閫傚悎鍗冲叴鍙戣█鍜屼复鍦哄簲绛旇缁冿紝寮鸿皟璧锋閫熷害銆佽繛璐害涓庣粨灏炬敹鏉熴€?,
+    tags: ['璧锋閫熷害', '绋冲畾杈撳嚭', '缁撳熬鏀舵潫'],
+    focusKeywords: ['璧锋閫熷害', '鍗￠】鎯呭喌', '鍗虫椂缁勭粐鑳藉姏', '鑷劧绋冲畾搴?],
+    accentColor: ['#7C3AED', '#A855F7'],
+    supportedLanguages: ['zh-CN'],
+    difficulty: 'advanced',
+    estimatedDurationSec: 150,
+    coverVariant: 'midnight-lens',
+  },
+  {
+    id: 'briefing-defense',
+    key: 'briefing-defense',
+    title: '姹囨姤绛旇京锛圔riefing & Defense锛?,
+    subtitle: '缁撹銆佽璇併€佸噯纭€佸洖搴斻€佷笓涓氭劅',
+    goal: '楂樻晥鍑嗙‘鍦板畬鎴愭寮忛檲杩颁笌闂鍥炲簲',
+    description: '閫傚悎宸ヤ綔姹囨姤銆侀」鐩瓟杈╁拰姝ｅ紡闄堣堪锛屽己璋冪粨璁哄鍚戜笌涓撲笟琛ㄨ揪鍑嗙‘鎬с€?,
+    tags: ['缁撹瀵煎悜', '璁鸿瘉瀹屾暣', '涓撲笟琛ㄨ揪'],
+    focusKeywords: ['缁撹瀵煎悜', '璁鸿瘉瀹屾暣鎬?, '鍥炲簲閽堝鎬?, '涓撲笟琛ㄨ揪鍑嗙‘鎬?],
+    accentColor: ['#4C1D95', '#7C3AED'],
+    supportedLanguages: ['zh-CN', 'en-US'],
+    difficulty: 'advanced',
+    estimatedDurationSec: 210,
+    coverVariant: 'briefing-grid',
+  },
+  {
+    id: 'interview-pitch',
+    key: 'interview-pitch',
+    title: '闈㈣瘯 / Pitch',
+    subtitle: '瀹氫綅銆佷寒鐐广€佺畝娲併€佽嚜淇°€佽蹇嗙偣',
+    goal: '蹇€熷缓绔嬪舰璞″苟褰㈡垚璇存湇鍔?,
+    description: '閫傚悎鑷垜浠嬬粛銆侀潰璇曡〃杈句笌鍟嗕笟 Pitch锛屽己璋冪涓€鍗拌薄銆佷寒鐐瑰舰鎴愪笌璇存湇鍔涖€?,
+    tags: ['绗竴鍗拌薄', '浜偣琛ㄨ揪', '璇存湇鍔?],
+    focusKeywords: ['鑷垜瀹氫綅', '鍐呭绮剧偧搴?, '浜偣褰㈡垚', '鑷俊鎰熶笌璇存湇鍔?],
+    accentColor: ['#9333EA', '#E879F9'],
+    supportedLanguages: ['zh-CN', 'en-US'],
+    difficulty: 'intermediate',
+    estimatedDurationSec: 180,
+    coverVariant: 'pitch-spark',
+  },
+];
+
+const historyRecords: SpeechRecord[] = [
+  {
+    id: 'record-2026-04-09-host',
+    sceneId: 'host-cn',
+    sceneTitle: '涓绘寔锛圚ost锛?,
+    title: '涓婂懆涓?路 涓枃涓绘寔',
+    language: 'zh-CN',
+    createdAt: '2026-04-09T19:30:00+08:00',
+    durationSec: 196,
+    overallScore: 76,
+    scoreDelta: 4,
+    summary: '寮€鍦哄甫鍏ユ劅鑷劧锛屼富鎸佽妭濂忓凡缁忓缓绔嬭捣鏉ワ紱濡傛灉杞満鍙ュ啀鏇撮『涓€鐐广€佷簰鍔ㄦ彁闂洿鏃╂姏鍑猴紝鐜板満甯﹀姩鎰熶細鏇村畬鏁淬€?,
+    metricChanges: [
+      { key: 'audienceImpact', label: '鍚紬甯﹀姩', delta: 8 },
+      { key: 'nonverbalPresence', label: '鍦哄煙鐘舵€?, delta: 6 },
+      { key: 'fluencyRhythm', label: '鑺傚鎺ㄨ繘', delta: -2 },
+    ],
+    previewTranscript: '澶у鏅氫笂濂斤紝娆㈣繋鏉ュ埌浠婂ぉ鐨勫勾搴﹀垎浜細锛屾垜浠厛鐢ㄤ竴涓皬鏁呬簨鎶婁富棰樺甫鍑烘潵銆?,
+    reportId: 'report-2026-04-09-host',
+  },
+  {
+    id: 'record-2026-04-07-guest',
+    sceneId: 'presentation-core',
+    sceneTitle: '涓婚鍒嗕韩锛圥resentation锛?,
+    title: '涓婂懆浜?路 English sharing',
+    language: 'en-US',
+    createdAt: '2026-04-07T20:15:00+08:00',
+    durationSec: 224,
+    overallScore: 81,
+    scoreDelta: 7,
+    summary: '涓婚涓荤嚎寰堟竻妤氾紝鑻辨枃瑙ｉ噴涔熸瘮杈冪ǔ瀹氾紱濡傛灉缁撳熬鎬荤粨鏇存彁鍓嶆敹鏉燂紝鍚紬璁板繂鐐逛細鏇村己銆?,
+    metricChanges: [
+      { key: 'contentStructure', label: '缁撴瀯娓呮櫚', delta: 7 },
+      { key: 'languageExpression', label: '瑙ｉ噴琛ㄨ揪', delta: 4 },
+      { key: 'audienceImpact', label: '鏀舵潫璁板繂鐐?, delta: -1 },
+    ],
+    previewTranscript: 'Today I want to share one key lesson from building under pressure: clarity wins attention.',
+    reportId: 'report-2026-04-07-guest',
+  },
+  {
+    id: 'record-2026-04-11-impromptu',
+    sceneId: 'impromptu-cn',
+    sceneTitle: '鍗冲叴琛ㄨ揪锛圛mpromptu锛?,
+    title: '鏈懆涓€ 路 鍗冲叴琛ㄨ揪璇曡',
+    language: 'zh-CN',
+    createdAt: '2026-04-11T18:40:00+08:00',
+    durationSec: 143,
+    overallScore: 73,
+    scoreDelta: 2,
+    summary: '璧锋閫熷害姣斾笂娆℃洿蹇紝涓村満缁勭粐涔熸洿鑷劧锛涘鏋滃仠椤垮啀骞插噣涓€鐐广€佺粨灏炬敹鏉熸洿鏄庣‘锛屾暣娈典細鏇寸ǔ銆?,
+    metricChanges: [
+      { key: 'fluencyRhythm', label: '璧锋鑺傚', delta: 5 },
+      { key: 'audienceImpact', label: '鑷劧甯﹀叆', delta: 3 },
+      { key: 'contentStructure', label: '缁撳熬鏀舵潫', delta: -4 },
+    ],
+    previewTranscript: '鎴戝彂鐜版垚骞翠汉鏈€鎿呴暱鐨勪竴浠朵簨锛屽氨鏄槑鏄庢病绌猴紝杩樿鎶婃棩绋嬫帓寰楀儚鑷繁寰堣嚜鐢便€?,
+    reportId: 'report-2026-04-11-impromptu',
+  },
+];
+
+function buildCoachDimension(
+  id: CoachDimensionId,
+  headline: string,
+  detail: string,
+  status: CoachDisplayStatus = 'analyzing',
+): CoachDimensionState {
+  return {
+    id,
+    status,
+    headline,
+    detail,
+    updatedAtMs: 0,
+    source: 'system',
+  };
+}
+
+const coachPanelSeed: CoachPanelState = {
+  summary: {
+    title: '缁х画婕旇锛孉I 姝ｅ湪鍚屾鏇存柊鍙嶉',
+    detail: '涓嬫柟涓夐」浼氶殢鐫€浣犵殑澹伴煶銆佺敾闈㈠拰鍐呭鎸佺画鏇存柊銆?,
+    sourceDimension: null,
+    updatedAtMs: 0,
+  },
+  bodyExpression: buildCoachDimension('body_expression', '瑙傚療鑲綋鐘舵€?, '淇濇寔鑷劧鎵撳紑鐨勯暅澶寸姸鎬?),
+  voicePacing: buildCoachDimension('voice_pacing', '瑙傚療璇煶鑺傚', '鍏堢ǔ浣忚閫熷拰鍙ュ熬鏀舵潫'),
+  contentExpression: buildCoachDimension('content_expression', '瑙傚療鍐呭琛ㄨ揪', '缁х画鎶婁富绾垮線鍓嶆帹杩?),
+};
+
+const liveCoachSeed: LiveCoachMessage = {
+  id: 'coach-default',
+  tone: 'encouraging',
+  title: '娣卞懠鍚革紝AI 姝ｅ湪鍊惧惉',
+  body: '鍏堟妸璇€熸斁绋筹紝缁欑涓€鍙ョ暀鍗婄閾哄灚銆備綘宸茬粡杩涘叆鐘舵€佷簡锛屾帴涓嬫潵璁╄〃杈炬洿浠庡銆?,
+  generatedAt: now,
+  source: 'system',
+};
+
+const transcriptSeed: TranscriptLine[] = [
+  {
+    id: 'line-1',
+    text: '澶у濂斤紝浠婂ぉ鎴戞兂鍒嗕韩涓€涓叧浜庨」鐩帹杩涘拰娌熼€氭晥鐜囩殑灏忚瀵熴€?,
+    timestampMs: 0,
+    confidence: 0.98,
+    speaker: 'user',
+  },
+  {
+    id: 'line-2',
+    text: '濡傛灉寮€澶磋兘鏇村揩鎶涘嚭缁撹锛屽悗闈㈢殑渚嬪瓙浼氭洿瀹规槗鎶婂惉浼楀甫杩涘幓銆?,
+    timestampMs: 4200,
+    confidence: 0.95,
+    speaker: 'coach',
+  },
+];
+
+const defaultSuggestions: ReportSuggestion[] = [
+  {
+    id: 'suggest-1',
+    title: '鎶婄粨璁哄啀鎻愬墠鍗婂彞',
+    detail: '灏ゅ叾鍦ㄤ富鎸佸拰绛旇京鍦烘櫙閲岋紝鍏堣惤缁撹鍐嶅睍寮€锛屼細璁╁惉浼楁洿蹇窡涓婁綘鐨勮妭濂忋€?,
+    priority: 'high',
+    metricKey: 'contentStructure',
+  },
+  {
+    id: 'suggest-2',
+    title: '鎷夊紑閲嶇偣鍙ョ殑鍋滈】',
+    detail: '閲嶇偣鍙ュ墠鍚庡悇鐣欏嚭涓€涓煭鍋滈】锛岃兘鏄捐憲鎻愬崌鑺傚鎰熷拰璇存湇鍔涖€?,
+    priority: 'medium',
+    metricKey: 'fluencyRhythm',
+  },
+  {
+    id: 'suggest-3',
+    title: '鍔犲己闀滃ご浜ゆ祦鎰?,
+    detail: '涓嬩竴杞彲浠ユ妸瑙嗙嚎鏇村鐣欏湪闀滃ご鍖哄煙锛岃鍚紬鎰熷拰鍦ㄥ満鎰熷啀寰€涓婅蛋涓€姝ャ€?,
+    priority: 'medium',
+    metricKey: 'audienceImpact',
+  },
+];
+
+const metricOrder: RadarMetricKey[] = [
+  'contentStructure',
+  'languageExpression',
+  'fluencyRhythm',
+  'vocalDelivery',
+  'nonverbalPresence',
+  'audienceImpact',
+];
+
+const reportSeed: ReportData = {
+  id: 'report-default-high-score',
+  relatedRecordId: 'record-2026-04-09-host',
+  generatedAt: now,
+  language: 'zh-CN',
+  sceneId: 'host-cn',
+  sceneTitle: '涓绘寔锛圚ost锛?,
+  headline: '浣犲凡缁忓叿澶囨垚鐔熶富鎸佺殑鎺у満鎰忚瘑涓庡惉浼楀甫鍔ㄦ劅',
+  overview: '杩欎竴杞噷锛屼綘鐨勫紑鍦哄惛寮曞姏鍜屾祦绋嬫帹杩涢兘姣旇緝绋冲畾锛岃兘杈冨揩鎶婂惉浼楀甫杩涜妭濂忥紝鏁翠綋鍛堢幇鍑轰簡鏄庢樉鐨勪富鎸佸満鍩熸劅銆?,
+  overallScore: 85,
+  stars: 4.5,
+  scoreTrend: {
+    delta: 6,
+    comparedToLabel: '杈冧笂娆″悓鍦烘櫙缁冧範',
+  },
+  radar: {
+    contentStructure: 78,
+    languageExpression: 80,
+    fluencyRhythm: 88,
+    vocalDelivery: 90,
+    nonverbalPresence: 84,
+    audienceImpact: 92,
+  },
+  radarMeta: {
+    contentStructure: { label: '鍐呭缁撴瀯', shortLabel: '缁撴瀯', description: '涓婚鏄惁鏄庣‘銆侀€昏緫鏄惁瀹屾暣銆佺粨灏炬槸鍚︽敹鏉熴€? },
+    languageExpression: { label: '璇█琛ㄨ揪', shortLabel: '璇█', description: '鐢ㄨ瘝鍑嗙‘鎬с€佽〃杈剧畝娲佸害涓庤瑷€寰椾綋搴︺€? },
+    fluencyRhythm: { label: '娴佸埄搴︿笌鑺傚', shortLabel: '鑺傚', description: '琛ㄨ揪杩炶疮鎬с€佽閫熶笌鍋滈】鎺у埗銆? },
+    vocalDelivery: { label: '璇煶琛ㄧ幇', shortLabel: '璇煶', description: '鍙戦煶娓呮櫚搴︺€侀煶閲忕ǔ瀹氭€т笌璇皟鍙樺寲銆? },
+    nonverbalPresence: { label: '闈炶瑷€鍛堢幇', shortLabel: '鐘舵€?, description: '鐪肩銆佽〃鎯呫€佸Э鎬佷笌鎵嬪娍鐨勫崗鍚屽害銆? },
+    audienceImpact: { label: '鍚紬鎰熶笌褰卞搷鍔?, shortLabel: '褰卞搷', description: '浜掑姩鎰忚瘑銆佸甫鍔ㄦ劅銆佽鏈嶅姏涓庤蹇嗙偣銆? },
+  },
+  highlights: [
+    '寮€鍦哄惛寮曞姏涓嶉敊锛屽墠娈佃緝蹇畬鎴愬満鍩熷缓绔嬨€?,
+    '杞満璇皵鑷劧锛屾祦绋嬫帹杩涙劅姣旇緝娓呮櫚銆?,
+    '澹伴煶甯﹀姩鎰熷拰闀滃ご浜ゆ祦鏄庢樉浼樹簬涓婁竴杞€?,
+  ],
+  suggestions: defaultSuggestions,
+  coachSummary: '缁х画淇濇寔褰撳墠鐨勭ǔ瀹氬紑鍦猴紝鎶婂叧閿瘝閲嶉煶鍜屼簰鍔ㄨ拷闂啀鍋氬己锛屼綘浼氭洿鍍忔垚鐔熶富鎸佷汉銆?,
+  comparison: historyRecords.map((record) => ({
+    recordId: record.id,
+    label: record.title,
+    overallScore: record.overallScore,
+  })),
+  rawMetrics: metricOrder.map((key) => ({
+    key,
+    score: {
+      contentStructure: 78,
+      languageExpression: 80,
+      fluencyRhythm: 88,
+      vocalDelivery: 90,
+      nonverbalPresence: 84,
+      audienceImpact: 92,
+    }[key],
+  })),
+};
+
+async function createRecordingSegment() {
+  const recording = new Audio.Recording();
+  await recording.prepareToRecordAsync(Audio.RecordingOptionsPresets.HIGH_QUALITY);
+  await recording.startAsync();
+  return recording;
+}
+
+async function stopAndUnloadRecording(recording: Audio.Recording) {
+  try {
+    await recording.stopAndUnloadAsync();
+  } catch (error) {
+    console.warn('stopAndUnloadRecording failed', error);
+  }
+
+  return recording.getURI();
+}
+
+async function requestBackend<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(`${API_BASE_URL}${path}`, init);
+
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(message || `Request failed with status ${response.status}`);
+  }
+
+  return response.json() as Promise<T>;
+}
+
+async function transcribeRecordingSegment(uri: string, language: PracticeLanguage) {
+  const formData = new FormData();
+  formData.append(
+    'audio_file',
+    {
+      uri,
+      name: `speech-segment-${Date.now()}.m4a`,
+      type: RECORDING_FILE_TYPE,
+    } as never,
+  );
+  formData.append('language', language);
+  formData.append('mime_type', RECORDING_FILE_TYPE);
+
+  const payload = await requestBackend<{ text?: string }>('/api/asr', {
+    method: 'POST',
+    body: formData,
+  });
+
+  return payload.text?.trim() ?? '';
+}
+
+async function requestVoiceCoachFeedback(input: {
+  currentText: string;
+  activeLanguage: PracticeLanguage;
+  sceneTitle: string;
+  sceneGoal: string;
+  focusKeywords: string[];
+  audioSegmentUri: string | null;
+  audioTranscript: string | null;
+}) {
+  const formData = new FormData();
+  formData.append('scope', 'voice_content');
+  formData.append('text', input.currentText);
+  formData.append('language', input.activeLanguage);
+  formData.append('sceneTitle', input.sceneTitle);
+  formData.append('sceneGoal', input.sceneGoal);
+  formData.append('focusKeywords', JSON.stringify(input.focusKeywords));
+  formData.append('audioTranscript', input.audioTranscript ?? '');
+  formData.append('mime_type', RECORDING_FILE_TYPE);
+
+  if (input.audioSegmentUri) {
+    formData.append(
+      'audio_file',
+      {
+        uri: input.audioSegmentUri,
+        name: `voice-content-${Date.now()}.m4a`,
+        type: RECORDING_FILE_TYPE,
+      } as never,
+    );
+  }
+
+  return requestBackend<{
+    insight?: string;
+    shouldEmit?: boolean;
+    coachPanel?: CoachPanelState;
+  }>('/api/coach', {
+    method: 'POST',
+    body: formData,
+  });
+}
+
+function normalizeComparisonText(text: string) {
+  return text
+    .trim()
+    .toLowerCase()
+    .replace(/[\s,.!?锛屻€傦紒锛熴€?'鈥溾€濃€樷€?)锛堬級-]/g, '');
+}
+
+function isWeakStandalonePartial(text: string, language: PracticeLanguage) {
+  const normalized = normalizeComparisonText(text);
+  if (!normalized) {
+    return true;
+  }
+
+  return PARTIAL_FILLER_TOKENS[language].has(normalized);
+}
+
+function isShortPartial(text: string, language: PracticeLanguage) {
+  if (language === 'zh-CN') {
+    return text.replace(/\s+/g, '').length <= 4;
+  }
+
+  return text.trim().split(/\s+/).filter(Boolean).length <= 3;
+}
+
+function extractSuffixAfterLoosePrefix(fullText: string, prefixText: string) {
+  let fullIndex = 0;
+  let prefixIndex = 0;
+
+  const isIgnorableBoundaryChar = (char: string) => /[\s,.!?锛屻€傦紒锛熴€?'鈥溾€濃€樷€?)锛堬級-]/.test(char);
+
+  while (fullIndex < fullText.length && prefixIndex < prefixText.length) {
+    const fullChar = fullText[fullIndex] ?? '';
+    const prefixChar = prefixText[prefixIndex] ?? '';
+
+    if (isIgnorableBoundaryChar(fullChar)) {
+      fullIndex += 1;
+      continue;
+    }
+
+    if (isIgnorableBoundaryChar(prefixChar)) {
+      prefixIndex += 1;
+      continue;
+    }
+
+    if (fullChar.toLowerCase() !== prefixChar.toLowerCase()) {
+      return null;
+    }
+
+    fullIndex += 1;
+    prefixIndex += 1;
+  }
+
+  while (prefixIndex < prefixText.length && isIgnorableBoundaryChar(prefixText[prefixIndex] ?? '')) {
+    prefixIndex += 1;
+  }
+
+  if (prefixIndex < prefixText.length) {
+    return null;
+  }
+
+  while (fullIndex < fullText.length && isIgnorableBoundaryChar(fullText[fullIndex] ?? '')) {
+    fullIndex += 1;
+  }
+
+  return fullText.slice(fullIndex).trim();
+}
+
+function buildTimestampMs(recordingStartedAt: string | null) {
+  return recordingStartedAt ? Date.now() - new Date(recordingStartedAt).getTime() : 0;
+}
+
+function getCurrentScene(state: Pick<PracticeStoreState, 'scenes' | 'activeSceneId'>) {
+  return state.scenes.find((scene) => scene.id === state.activeSceneId) ?? sceneCatalog[0];
+}
+
+function getCurrentUserTranscript(lines: TranscriptLine[]) {
+  return lines
+    .filter((line) => line.speaker === 'user')
+    .map((line) => line.text.trim())
+    .filter(Boolean)
+    .join('\n');
+}
+
+function countUserTranscriptLines(lines: TranscriptLine[]) {
+  return lines.filter((line) => line.speaker === 'user').length;
+}
+
+function countPattern(text: string, pattern: RegExp) {
+  return (text.match(pattern) ?? []).length;
+}
+
+function getRecentUserTranscript(lines: TranscriptLine[], maxLines = 3) {
+  return lines
+    .filter((line) => line.speaker === 'user')
+    .slice(-maxLines)
+    .map((line) => line.text.trim())
+    .filter(Boolean)
+    .join('\n');
+}
+
+function buildCoachScopeSignature(panel: CoachPanelState, scope: CoachLaneScope) {
+  const source =
+    scope === 'body_visual'
+      ? [panel.summary.title, panel.summary.detail, panel.bodyExpression.status, panel.bodyExpression.headline, panel.bodyExpression.detail]
+      : [
+          panel.summary.title,
+          panel.summary.detail,
+          panel.voicePacing.status,
+          panel.voicePacing.headline,
+          panel.voicePacing.detail,
+          panel.contentExpression.status,
+          panel.contentExpression.headline,
+          panel.contentExpression.detail,
+        ];
+
+  return source.join('|').trim();
+}
+
+function buildSpeechContextFromTranscript(lines: TranscriptLine[], language: PracticeLanguage) {
+  const recentText = getRecentUserTranscript(lines, 2);
+  if (!recentText) {
+    return null;
+  }
+
+  const compact = recentText.replace(/\s+/g, '');
+  const fillerCount =
+    language === 'zh-CN'
+      ? countPattern(recentText, /(鐒跺悗|灏辨槸|閭ｄ釜|鍏跺疄|鎴戣寰梶鍡瘄鍛?/g)
+      : countPattern(recentText, /\b(um|uh|well|like|you know)\b/gi);
+  const restartCount =
+    language === 'zh-CN'
+      ? countPattern(recentText, /(鎴戞垜|鐒跺悗鐒跺悗|灏辨槸灏辨槸)/g)
+      : countPattern(recentText, /\b(\w+)\s+\1\b/gi);
+
+  return {
+    excerpt: recentText.slice(-120),
+    charCount: compact.length,
+    fillerCount,
+    restartCount,
+    rhythmHint:
+      fillerCount >= 3 || restartCount >= 2
+        ? 'pace_unstable'
+        : compact.length >= 36
+          ? 'pace_building'
+          : 'warming_up',
+  };
+}
+
+function buildSpeechRuleCoachUpdate(
+  lines: TranscriptLine[],
+  language: PracticeLanguage,
+  currentPanel: CoachPanelState,
+) {
+  const recentText = getRecentUserTranscript(lines, 3);
+  const compact = recentText.replace(/\s+/g, '');
+
+  if (compact.length < 8) {
+    return {
+      shouldEmit: false,
+      insight: '',
+      coachPanel: currentPanel,
+    };
+  }
+
+  const clauseSplit = recentText
+    .split(/[銆傦紒锛??锛?\n]+/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+  const clauseCount = Math.max(1, clauseSplit.length);
+  const punctuationCount = countPattern(recentText, /[銆傦紒锛??锛?锛?]/g);
+  const averageClauseLength = Math.round(compact.length / clauseCount);
+  const fillerCount =
+    language === 'zh-CN'
+      ? countPattern(recentText, /(鐒跺悗|灏辨槸|閭ｄ釜|鍏跺疄|鎴戣寰梶鍡瘄鍛?/g)
+      : countPattern(recentText, /\b(um|uh|well|like|you know)\b/gi);
+  const restartCount =
+    language === 'zh-CN'
+      ? countPattern(recentText, /(鎴戞垜|鐒跺悗鐒跺悗|灏辨槸灏辨槸)/g)
+      : countPattern(recentText, /\b(\w+)\s+\1\b/gi);
+  const hasConclusionCue =
+    language === 'zh-CN'
+      ? /(鎵€浠缁撹|鎴戞兂璇磡閲嶇偣鏄瘄鏈€閲嶈鐨勬槸|鏍稿績鏄?/.test(recentText)
+      : /\b(so|in short|the point is|my point is|the key is)\b/i.test(recentText);
+  const hasStructureCue =
+    language === 'zh-CN'
+      ? /(棣栧厛|鐒跺悗|鏈€鍚巪涓€鏂归潰|鍙︿竴鏂归潰|姣斿)/.test(recentText)
+      : /\b(first|then|finally|for example|because)\b/i.test(recentText);
+
+  let voiceStatus: CoachDisplayStatus = 'stable';
+  let voiceHeadline = '璇煶鑺傚鍦ㄥ彉绋?;
+  let voiceDetail = '淇濇寔鐜板湪鐨勮閫燂紝涓嬩竴鍙ユ妸鍙ュ熬鍐嶆敹骞插噣涓€鐐广€?;
+
+  if (restartCount >= 2 || fillerCount >= 3) {
+    voiceStatus = 'adjust_now';
+    voiceHeadline = '鍑忓皯閲嶅璧峰彞';
+    voiceDetail = '杩欏彞鐩存帴璇村畬锛屼笉瑕侀噸澶嶉噸鏂拌捣澶淬€?;
+  } else if (averageClauseLength >= 26 && punctuationCount <= 1) {
+    voiceStatus = 'adjust_now';
+    voiceHeadline = '姣忓彞鍐嶇煭涓€鐐?;
+    voiceDetail = '涓€涓剰鎬濊瀹屽氨鍋滃崐鎷嶏紝鍐嶈繘鍏ヤ笅涓€鍙ャ€?;
+  } else if (compact.length < 20) {
+    voiceStatus = 'analyzing';
+    voiceHeadline = '缁х画寰€涓嬭';
+    voiceDetail = '鍏堟妸涓€灞傛剰鎬濊瀹屾暣锛岃妭濂忓垽鏂細鏇村噯纭€?;
+  }
+
+  let contentStatus: CoachDisplayStatus = 'stable';
+  let contentHeadline = '涓荤嚎鍩烘湰鑳借窡浣?;
+  let contentDetail = '涓嬩竴鍙ユ妸缁撹鏀惧墠闈紝鍐嶈ˉ涓€涓悊鐢憋紝浼氭洿娓呮銆?;
+
+  if (!hasConclusionCue && compact.length >= 28) {
+    contentStatus = 'adjust_now';
+    contentHeadline = '鍏堟妸缁撹鎶涘嚭鏉?;
+    contentDetail = '鍏堣浣犳渶鎯宠鍚紬璁颁綇鐨勭偣锛屽啀灞曞紑瑙ｉ噴銆?;
+  } else if (!hasStructureCue && clauseCount >= 3) {
+    contentStatus = 'stable';
+    contentHeadline = '琛ヤ竴涓粨鏋勮矾鏍?;
+    contentDetail = '鐢ㄢ€滃厛銆佸啀銆佹渶鍚庘€濊繖绫昏矾鏍囪瘝锛屽惉浼椾細鏇村鏄撹窡涓娿€?;
+  } else if (compact.length < 20) {
+    contentStatus = 'analyzing';
+    contentHeadline = '鍐呭杩樺湪灞曞紑';
+    contentDetail = '缁х画琛ヤ竴灞傜悊鐢辨垨渚嬪瓙锛屽唴瀹瑰垽鏂細鏇寸ǔ銆?;
+  }
+
+  const sourceDimension =
+    voiceStatus === 'adjust_now'
+      ? 'voice_pacing'
+      : contentStatus === 'adjust_now'
+        ? 'content_expression'
+        : contentStatus === 'stable'
+          ? 'content_expression'
+          : 'voice_pacing';
+
+  const summaryTitle =
+    sourceDimension === 'voice_pacing'
+      ? voiceHeadline
+      : contentHeadline;
+  const summaryDetail =
+    sourceDimension === 'voice_pacing'
+      ? voiceDetail
+      : contentDetail;
+
+  const nextPanel: CoachPanelState = {
+    ...currentPanel,
+    summary: {
+      title: summaryTitle,
+      detail: summaryDetail,
+      sourceDimension,
+      updatedAtMs: Date.now(),
+    },
+    voicePacing: {
+      id: 'voice_pacing',
+      status: voiceStatus,
+      headline: voiceHeadline,
+      detail: voiceDetail,
+      updatedAtMs: Date.now(),
+      source: 'system',
+    },
+    contentExpression: {
+      id: 'content_expression',
+      status: contentStatus,
+      headline: contentHeadline,
+      detail: contentDetail,
+      updatedAtMs: Date.now(),
+      source: 'system',
+    },
+  };
+
+  return {
+    shouldEmit: true,
+    insight: `${summaryTitle}銆?{summaryDetail}`,
+    coachPanel: nextPanel,
+  };
+}
+
+function getQAAutoAdvanceDelay(text: string) {
+  const compactLength = text.replace(/\s+/g, '').length;
+  const hasStrongEnding = /[銆傦紒锛??]$/.test(text.trim());
+
+  if (compactLength >= 32 && hasStrongEnding) {
+    return 900;
+  }
+
+  if (compactLength >= 18) {
+    return 1200;
+  }
+
+  return QA_AUTO_ADVANCE_MS;
+}
+
+function armVoiceContentRefreshTimer() {
+  const state = usePracticeStore.getState();
+
+  if (state.voiceContentFlushTimeoutId) {
+    clearTimeout(state.voiceContentFlushTimeoutId);
+  }
+
+  if (state.status !== 'recording' || state.qaEnabled) {
+    return;
+  }
+
+  const timeoutId = setTimeout(async () => {
+    const latestState = usePracticeStore.getState();
+
+    usePracticeStore.setState({
+      voiceContentFlushTimeoutId: null,
+    });
+
+    if (latestState.status !== 'recording' || latestState.qaEnabled) {
+      return;
+    }
+
+    const currentText = getRecentUserTranscript(latestState.transcript, 3);
+    const latestSegment = latestState.recentVoiceSegments[latestState.recentVoiceSegments.length - 1] ?? null;
+
+    if (!currentText || !latestSegment) {
+      return;
+    }
+
+    await latestState.fetchAICoachFeedback(currentText, {
+      scope: 'voice_content',
+      audioSegmentUri: latestSegment.uri,
+      audioTranscript: latestSegment.transcript,
+    });
+  }, VOICE_CONTENT_SILENCE_WINDOW_MS);
+
+  usePracticeStore.setState({
+    voiceContentFlushTimeoutId: timeoutId,
+  });
+}
+
+function statusToEnergy(status: CoachDisplayStatus) {
+  switch (status) {
+    case 'doing_well':
+      return 100;
+    case 'stable':
+      return 62;
+    case 'adjust_now':
+      return 24;
+    default:
+      return 38;
+  }
+}
+
+function buildFallbackCoachPanel(text: string, hasFrame: boolean): CoachPanelState {
+  const compact = normalizeComparisonText(text);
+  const isLongEnough = compact.length > 18;
+
+  return {
+    summary: {
+      title: isLongEnough ? '缁х画璇达紝AI 姝ｅ湪鍚屾鏍″噯浣犵殑瀹炴椂鐘舵€? : '鍏堟妸绗竴灞傛剰鎬濊瀹屾暣锛屼笁缁村弽棣堜細缁х画鏇存柊',
+      detail: hasFrame
+        ? '宸茬粨鍚堝０闊炽€佸唴瀹瑰拰闀滃ご鐢婚潰鍋氬悓姝ヨ瀵熴€?
+        : '宸茬粨鍚堝０闊冲拰鍐呭鍋氬悓姝ヨ瀵燂紝鐢婚潰缁村害浼氬湪鑾峰彇闀滃ご淇℃伅鍚庡姞寮恒€?,
+      sourceDimension: isLongEnough ? 'content_expression' : null,
+      updatedAtMs: Date.now(),
+    },
+    bodyExpression: {
+      id: 'body_expression',
+      status: hasFrame ? 'stable' : 'analyzing',
+      headline: hasFrame ? '闀滃ご鐘舵€佸熀鏈ǔ瀹? : '绛夊緟鐢婚潰淇″彿',
+      detail: hasFrame ? '缁х画淇濇寔姝ｈ闀滃ご鍜岃嚜鐒舵墦寮€鐨勪笂鍗婅韩銆? : '缁х画闈㈠悜闀滃ご锛屼笅涓€甯т細琛ュ厖鑲綋鍙嶉銆?,
+      updatedAtMs: Date.now(),
+      source: 'system',
+    },
+    voicePacing: {
+      id: 'voice_pacing',
+      status: isLongEnough ? 'stable' : 'analyzing',
+      headline: isLongEnough ? '鍏堢ǔ浣忚閫熷拰鍙ュ熬' : '缁х画寰€涓嬭',
+      detail: isLongEnough ? '涓嬩竴鍙ユ妸閲嶇偣璇嶆斁鎱㈠崐鎷嶏紝鑺傚浼氭洿骞插噣銆? : '鍏堣涓€鍙ヨ瘽瀹屾暣钀藉湴锛岃闊冲垽鏂細鏇村噯纭€?,
+      updatedAtMs: Date.now(),
+      source: 'system',
+    },
+    contentExpression: {
+      id: 'content_expression',
+      status: isLongEnough ? 'stable' : 'analyzing',
+      headline: isLongEnough ? '鍐呭涓荤嚎鍩烘湰鑳借窡浣? : '缁х画灞曞紑涓荤嚎',
+      detail: isLongEnough ? '涓嬩竴鍙ュ厛璁茬粨璁猴紝鍐嶈ˉ鍘熷洜锛屼細鏇村儚涓撲笟琛ㄨ揪銆? : '鍏堟妸浣犳渶鎯宠鍚紬璁颁綇鐨勭偣璁插嚭鏉ャ€?,
+      updatedAtMs: Date.now(),
+      source: 'system',
+    },
+  };
+}
+
+function mergeCoachPanelByScope(
+  current: CoachPanelState,
+  incoming: CoachPanelState,
+  scope: CoachLaneScope,
+): CoachPanelState {
+  return {
+    ...current,
+    summary: incoming.summary,
+    bodyExpression: scope === 'body_visual' ? incoming.bodyExpression : current.bodyExpression,
+    voicePacing: scope === 'voice_content' ? incoming.voicePacing : current.voicePacing,
+    contentExpression: scope === 'voice_content' ? incoming.contentExpression : current.contentExpression,
+  };
+}
+
+function mergeUserTranscript(
+  transcript: TranscriptLine[],
+  text: string,
+  language: PracticeLanguage,
+  recordingStartedAt: string | null,
+) {
+  const trimmedText = text.trim();
+  if (!trimmedText) {
+    return transcript;
+  }
+
+  const nextTranscript = [...transcript];
+  const lastUserIndex = [...nextTranscript].reverse().findIndex((line) => line.speaker === 'user');
+
+  if (lastUserIndex === -1) {
+    nextTranscript.push({
+      id: `line-${Date.now()}`,
+      text: trimmedText,
+      timestampMs: buildTimestampMs(recordingStartedAt),
+      confidence: 0.98,
+      speaker: 'user',
+    });
+    return nextTranscript;
+  }
+
+  const actualLastIndex = nextTranscript.length - 1 - lastUserIndex;
+  const lastLine = nextTranscript[actualLastIndex];
+  const lastText = lastLine?.text.trim() ?? '';
+
+  if (!lastText) {
+    nextTranscript[actualLastIndex] = {
+      ...lastLine,
+      text: trimmedText,
+      timestampMs: buildTimestampMs(recordingStartedAt),
+    };
+    return nextTranscript;
+  }
+
+  if (normalizeComparisonText(lastText) === normalizeComparisonText(trimmedText)) {
+    return nextTranscript;
+  }
+
+  const suffix = extractSuffixAfterLoosePrefix(trimmedText, lastText);
+  if (suffix !== null) {
+    if (!suffix || isWeakStandalonePartial(suffix, language)) {
+      return nextTranscript;
+    }
+
+    nextTranscript[actualLastIndex] = {
+      ...lastLine,
+      text: language === 'zh-CN' ? `${lastText}${suffix}` : `${lastText} ${suffix}`.trim(),
+      timestampMs: buildTimestampMs(recordingStartedAt),
+    };
+    return nextTranscript;
+  }
+
+  if (lastText.startsWith(trimmedText) || lastText.endsWith(trimmedText)) {
+    return nextTranscript;
+  }
+
+  if (isShortPartial(trimmedText, language) || isWeakStandalonePartial(trimmedText, language)) {
+    nextTranscript[actualLastIndex] = {
+      ...lastLine,
+      text: language === 'zh-CN' ? `${lastText}${trimmedText}` : `${lastText} ${trimmedText}`.trim(),
+      timestampMs: buildTimestampMs(recordingStartedAt),
+    };
+    return nextTranscript;
+  }
+
+  nextTranscript.push({
+    id: `line-${Date.now()}`,
+    text: trimmedText,
+    timestampMs: buildTimestampMs(recordingStartedAt),
+    confidence: 0.98,
+    speaker: 'user',
+  });
+  return nextTranscript;
+}
+
+export interface PracticeStoreState {
+  status: RecordingStatus;
+  activeSceneId: string;
+  activeLanguage: PracticeLanguage;
+  scenes: PracticeScene[];
+  history: SpeechRecord[];
+  liveCoach: LiveCoachMessage;
+  liveCoachInsight: string;
+  coachPanel: CoachPanelState;
+  transcript: TranscriptLine[];
+  currentReport: ReportData | null;
+  pendingReport: ReportData | null;
+  recordingStartedAt: string | null;
+  recordingElapsedMs: number;
+  analysisProgress: number;
+  isMicEnabled: boolean;
+  isCameraEnabled: boolean;
+  activeRecording: Audio.Recording | null;
+  transcriptionIntervalId: ReturnType<typeof setInterval> | null;
+  analysisIntervalId: ReturnType<typeof setInterval> | null;
+  recentVoiceSegments: BufferedVoiceSegment[];
+  voiceContentFlushTimeoutId: ReturnType<typeof setTimeout> | null;
+  lastCoachScopeSignatures: Record<CoachLaneScope, string | null>;
+  qaEnabled: boolean;
+  qaPhase: QAPhase;
+  qaMessages: CoachChatMessage[];
+  qaCurrentQuestion: string | null;
+  qaCurrentGoal: string | null;
+  qaTranscriptCursor: number;
+  qaSpeaking: boolean;
+  qaTurnId: string | null;
+  qaAutoAdvanceTimeoutId: ReturnType<typeof setTimeout> | null;
+  setActiveScene: (sceneId: string) => void;
+  setActiveLanguage: (language: PracticeLanguage) => void;
+  setRecordingStatus: (status: RecordingStatus) => void;
+  setCoachPanel: (panel: CoachPanelState) => void;
+  pushTranscriptLine: (line: TranscriptLine) => void;
+  appendTranscriptText: (text: string, speaker?: TranscriptLine['speaker']) => void;
+  updateLiveCoach: (message: LiveCoachMessage) => void;
+  startRecording: () => Promise<void>;
+  stopRecording: () => Promise<void>;
+  stopRecordingAndGenerateReport: () => Promise<void>;
+  fetchAICoachFeedback: (
+    currentText: string,
+    options?: {
+      frameBase64?: string | null;
+      scope?: CoachLaneScope;
+      audioSegmentUri?: string | null;
+      audioTranscript?: string | null;
+    },
+  ) => Promise<void>;
+  startCoachQA: () => Promise<void>;
+  continueCoachQA: () => Promise<void>;
+  markQAAudioPlaybackStarted: (turnId?: string | null) => void;
+  markQAAudioPlaybackEnded: (turnId?: string | null) => void;
+  closeCoachQA: () => void;
+  fetchFinalReport: (fullTranscript: string) => Promise<void>;
+  beginAnalyzing: () => Promise<void>;
+  finishSession: (report?: ReportData) => void;
+  resetSession: () => void;
+  hydrateMockSession: () => void;
+}
+
+export const usePracticeStore = create<PracticeStoreState>((set) => ({
+  status: 'preparing',
+  activeSceneId: sceneCatalog[0].id,
+  activeLanguage: 'zh-CN',
+  scenes: sceneCatalog,
+  history: historyRecords,
+  liveCoach: liveCoachSeed,
+  liveCoachInsight: liveCoachSeed.body,
+  coachPanel: coachPanelSeed,
+  transcript: transcriptSeed,
+  currentReport: reportSeed,
+  pendingReport: null,
+  recordingStartedAt: null,
+  recordingElapsedMs: 0,
+  analysisProgress: 0,
+  isMicEnabled: true,
+  isCameraEnabled: true,
+  activeRecording: null,
+  transcriptionIntervalId: null,
+  analysisIntervalId: null,
+  recentVoiceSegments: [],
+  voiceContentFlushTimeoutId: null,
+  lastCoachScopeSignatures: {
+    voice_content: null,
+    body_visual: null,
+  },
+  qaEnabled: false,
+  qaPhase: 'idle',
+  qaMessages: [],
+  qaCurrentQuestion: null,
+  qaCurrentGoal: null,
+  qaTranscriptCursor: 0,
+  qaSpeaking: false,
+  qaTurnId: null,
+  qaAutoAdvanceTimeoutId: null,
+  setActiveScene: (sceneId) => set({ activeSceneId: sceneId }),
+  setActiveLanguage: (language) => set({ activeLanguage: language }),
+  setRecordingStatus: (status) => set({ status }),
+  setCoachPanel: (panel) => set({ coachPanel: panel }),
+  pushTranscriptLine: (line) =>
+    set((state) => ({
+      transcript: [...state.transcript, line],
+    })),
+  appendTranscriptText: (text, speaker = 'user') => {
+    set((state) => {
+      if (speaker !== 'user') {
+        return {
+          transcript: [
+            ...state.transcript,
+            {
+              id: `line-${Date.now()}`,
+              text,
+              timestampMs: buildTimestampMs(state.recordingStartedAt),
+              confidence: 0.98,
+              speaker,
+            },
+          ],
+        };
+      }
+
+      const nextTranscript = mergeUserTranscript(state.transcript, text, state.activeLanguage, state.recordingStartedAt);
+      const speechRuleUpdate = buildSpeechRuleCoachUpdate(nextTranscript, state.activeLanguage, state.coachPanel);
+
+      if (!speechRuleUpdate.shouldEmit) {
+        return {
+          transcript: nextTranscript,
+        };
+      }
+
+      const nextVoiceSignature = buildCoachScopeSignature(speechRuleUpdate.coachPanel, 'voice_content');
+      const sameVoiceSignature = state.lastCoachScopeSignatures.voice_content === nextVoiceSignature;
+
+      return {
+        transcript: nextTranscript,
+        coachPanel: sameVoiceSignature ? state.coachPanel : speechRuleUpdate.coachPanel,
+        lastCoachScopeSignatures: sameVoiceSignature
+          ? state.lastCoachScopeSignatures
+          : {
+              ...state.lastCoachScopeSignatures,
+              voice_content: nextVoiceSignature,
+            },
+        liveCoachInsight: state.qaEnabled || sameVoiceSignature ? state.liveCoachInsight : speechRuleUpdate.insight,
+        liveCoach:
+          state.qaEnabled || sameVoiceSignature
+            ? state.liveCoach
+            : {
+                id: `coach-rule-${Date.now()}`,
+                tone: 'analytical',
+                title: 'Omni Live Coach',
+                body: speechRuleUpdate.insight,
+                generatedAt: new Date().toISOString(),
+                source: 'system',
+              },
+      };
+    });
+
+    if (speaker === 'user') {
+      armQAAutoAdvanceTimer(text);
+    }
+  },
+  updateLiveCoach: (message) => set({ liveCoach: message, liveCoachInsight: message.body }),
+  startRecording: async () => {
+    const existingState = usePracticeStore.getState();
+    if (existingState.qaAutoAdvanceTimeoutId) {
+      clearTimeout(existingState.qaAutoAdvanceTimeoutId);
+    }
+    if (existingState.voiceContentFlushTimeoutId) {
+      clearTimeout(existingState.voiceContentFlushTimeoutId);
+    }
+
+    const { granted } = await Audio.requestPermissionsAsync();
+
+    if (!granted) {
+      set({
+        liveCoach: {
+          id: 'coach-mic-denied',
+          tone: 'analytical',
+          title: '闇€瑕侀害鍏嬮鏉冮檺',
+          body: '璇峰湪绯荤粺璁剧疆涓厑璁搁害鍏嬮璁块棶锛屾墠鑳藉紑濮嬪疄鏃跺綍闊炽€佸瓧骞曡瘑鍒拰 AI 鏁欑粌鍙嶉銆?,
+          generatedAt: new Date().toISOString(),
+          source: 'system',
+        },
+        liveCoachInsight: '褰撳墠鏈幏寰楅害鍏嬮鏉冮檺锛岃鍏堝湪绯荤粺璁剧疆涓巿鏉冦€?,
+      });
+      return;
+    }
+
+    await Audio.setAudioModeAsync({
+      allowsRecordingIOS: true,
+      playsInSilentModeIOS: true,
+      staysActiveInBackground: false,
+      shouldDuckAndroid: true,
+    });
+
+    const firstSegment = await createRecordingSegment();
+    const startedAt = new Date().toISOString();
+    let isRotatingSegment = false;
+
+    const intervalId = setInterval(async () => {
+      if (isRotatingSegment) {
+        return;
+      }
+
+      const state = usePracticeStore.getState();
+      const currentRecording = state.activeRecording;
+
+      if (!currentRecording || state.status !== 'recording') {
+        return;
+      }
+
+      isRotatingSegment = true;
+
+      try {
+        const finishedUri = await stopAndUnloadRecording(currentRecording);
+        const nextSegment = await createRecordingSegment();
+        usePracticeStore.setState({ activeRecording: nextSegment });
+
+        if (finishedUri) {
+          const transcriptText = await transcribeRecordingSegment(finishedUri, state.activeLanguage);
+          if (transcriptText) {
+            usePracticeStore.setState((currentState) => ({
+              recentVoiceSegments: [
+                ...currentState.recentVoiceSegments.slice(-(VOICE_CONTENT_BUFFER_LIMIT - 1)),
+                {
+                  uri: finishedUri,
+                  transcript: transcriptText,
+                  createdAt: new Date().toISOString(),
+                },
+              ],
+            }));
+            usePracticeStore.getState().appendTranscriptText(transcriptText, 'user');
+            armVoiceContentRefreshTimer();
+          }
+        }
+      } catch (error) {
+        console.warn('segment transcription failed', error);
+        usePracticeStore.setState({
+          liveCoachInsight: '????????????????????????? Omni ?????',
+        });
+      } finally {
+        isRotatingSegment = false;
+      }
+    }, RECORDING_SEGMENT_MS);
+
+    set({
+      status: 'recording',
+      recordingStartedAt: startedAt,
+      recordingElapsedMs: 0,
+      currentReport: null,
+      activeRecording: firstSegment,
+      transcriptionIntervalId: intervalId,
+      transcript: [],
+      recentVoiceSegments: [],
+      voiceContentFlushTimeoutId: null,
+      coachPanel: coachPanelSeed,
+      lastCoachScopeSignatures: {
+        voice_content: null,
+        body_visual: null,
+      },
+      liveCoach: {
+        id: 'coach-recording',
+        tone: 'encouraging',
+        title: '?????',
+        body: '???????Omni ?????????????????????????????',
+        generatedAt: startedAt,
+        source: 'system',
+      },
+      liveCoachInsight: '?????????????? Omni ?????????',
+      qaEnabled: false,
+      qaPhase: 'idle',
+      qaMessages: [],
+      qaCurrentQuestion: null,
+      qaCurrentGoal: null,
+      qaTranscriptCursor: 0,
+      qaSpeaking: false,
+      qaTurnId: null,
+      qaAutoAdvanceTimeoutId: null,
+    });
+  },
+  stopRecording: async () => {
+    const state = usePracticeStore.getState();
+
+    if (state.transcriptionIntervalId) {
+      clearInterval(state.transcriptionIntervalId);
+    }
+    if (state.voiceContentFlushTimeoutId) {
+      clearTimeout(state.voiceContentFlushTimeoutId);
+    }
+
+    if (state.qaAutoAdvanceTimeoutId) {
+      clearTimeout(state.qaAutoAdvanceTimeoutId);
+    }
+
+    let finalTranscript = '';
+
+    if (state.activeRecording) {
+      const finalUri = await stopAndUnloadRecording(state.activeRecording);
+
+      if (finalUri) {
+        try {
+          finalTranscript = await transcribeRecordingSegment(finalUri, state.activeLanguage);
+        } catch (error) {
+          console.warn('final transcription failed', error);
+        }
+      }
+    }
+
+    if (finalTranscript) {
+      usePracticeStore.getState().appendTranscriptText(finalTranscript, 'user');
+    }
+
+    set((currentState) => ({
+      status: 'idle',
+      recordingStartedAt: null,
+      recordingElapsedMs: currentState.recordingElapsedMs,
+      activeRecording: null,
+      transcriptionIntervalId: null,
+      recentVoiceSegments: [],
+      voiceContentFlushTimeoutId: null,
+      qaEnabled: false,
+      qaPhase: 'idle',
+      qaCurrentGoal: null,
+      qaSpeaking: false,
+      qaTurnId: null,
+      qaAutoAdvanceTimeoutId: null,
+    }));
+  },
+  stopRecordingAndGenerateReport: async () => {
+    const state = usePracticeStore.getState();
+
+    if (state.transcriptionIntervalId) {
+      clearInterval(state.transcriptionIntervalId);
+    }
+
+    if (state.analysisIntervalId) {
+      clearInterval(state.analysisIntervalId);
+    }
+    if (state.voiceContentFlushTimeoutId) {
+      clearTimeout(state.voiceContentFlushTimeoutId);
+    }
+
+    if (state.qaAutoAdvanceTimeoutId) {
+      clearTimeout(state.qaAutoAdvanceTimeoutId);
+    }
+
+    if (state.activeRecording) {
+      await stopAndUnloadRecording(state.activeRecording);
+    }
+
+    const fullTranscript = getCurrentUserTranscript(state.transcript);
+
+    const progressIntervalId = setInterval(() => {
+      const latestState = usePracticeStore.getState();
+
+      if (latestState.status !== 'analyzing') {
+        clearInterval(progressIntervalId);
+        return;
+      }
+
+      const adaptiveStep = latestState.pendingReport
+        ? latestState.analysisProgress < 70
+          ? 10
+          : latestState.analysisProgress < 90
+            ? 5
+            : 2
+        : latestState.analysisProgress < 45
+          ? 8
+          : latestState.analysisProgress < 75
+            ? 4
+            : 1;
+
+      const easedProgress = latestState.pendingReport
+        ? Math.min(100, latestState.analysisProgress + adaptiveStep)
+        : Math.min(94, latestState.analysisProgress + adaptiveStep);
+
+      if (latestState.pendingReport && easedProgress >= 100) {
+        clearInterval(progressIntervalId);
+        usePracticeStore.setState({ analysisProgress: 100 });
+        setTimeout(() => {
+          const settledState = usePracticeStore.getState();
+          if (!settledState.pendingReport) {
+            return;
+          }
+
+          usePracticeStore.setState({
+            status: 'finished',
+            currentReport: settledState.pendingReport,
+            pendingReport: null,
+            analysisProgress: 100,
+            analysisIntervalId: null,
+            lastCoachScopeSignatures: {
+              voice_content: null,
+              body_visual: null,
+            },
+            liveCoachInsight: settledState.pendingReport.headline,
+          });
+        }, 200);
+        return;
+      }
+
+      usePracticeStore.setState({ analysisProgress: easedProgress });
+    }, 180);
+
+    set({
+      status: 'analyzing',
+      activeRecording: null,
+      transcriptionIntervalId: null,
+      analysisIntervalId: progressIntervalId,
+      recentVoiceSegments: [],
+      voiceContentFlushTimeoutId: null,
+      recordingStartedAt: null,
+      pendingReport: null,
+      analysisProgress: 0,
+      qaEnabled: false,
+      qaPhase: 'completed',
+      qaCurrentGoal: null,
+      qaSpeaking: false,
+      qaTurnId: null,
+      qaAutoAdvanceTimeoutId: null,
+      liveCoach: {
+        id: 'coach-analyzing',
+        tone: 'analytical',
+        title: 'AI 姝ｅ湪娣卞害鍒嗘瀽',
+        body: '宸插仠姝㈠綍闊冲苟閲婃斁楹﹀厠椋庯紝姝ｅ湪鍩轰簬瀹屾暣閫愬瓧绋跨敓鎴愭渶缁堟姤鍛娿€?,
+        generatedAt: new Date().toISOString(),
+        source: 'system',
+      },
+      liveCoachInsight: 'AI 姝ｅ湪娣卞害鍒嗘瀽鎮ㄧ殑婕旇琛ㄧ幇...',
+    });
+
+    await usePracticeStore.getState().fetchFinalReport(fullTranscript);
+  },
+  fetchAICoachFeedback: async (currentText, options) => {
+    const scope = options?.scope ?? 'voice_content';
+
+    if (scope === 'voice_content' && !currentText.trim() && !options?.audioSegmentUri) {
+      return;
+    }
+
+    if (scope === 'body_visual' && !options?.frameBase64) {
+      return;
+    }
+
+    try {
+      const state = usePracticeStore.getState();
+      const scene = getCurrentScene(state);
+      const payload =
+        scope === 'voice_content'
+          ? await requestVoiceCoachFeedback({
+              currentText,
+              activeLanguage: state.activeLanguage,
+              sceneTitle: scene.title,
+              sceneGoal: scene.goal,
+              focusKeywords: scene.focusKeywords,
+              audioSegmentUri: options?.audioSegmentUri ?? null,
+              audioTranscript: options?.audioTranscript ?? null,
+            })
+          : await requestBackend<{
+              insight?: string;
+              shouldEmit?: boolean;
+              coachPanel?: CoachPanelState;
+            }>('/api/coach', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                text: currentText,
+                language: state.activeLanguage,
+                sceneTitle: scene.title,
+                sceneGoal: scene.goal,
+                focusKeywords: scene.focusKeywords,
+                scope,
+                frameBase64: options?.frameBase64 ?? null,
+                speechContext:
+                  scope === 'body_visual'
+                    ? buildSpeechContextFromTranscript(state.transcript, state.activeLanguage)
+                    : null,
+              }),
+            });
+
+      if (payload.shouldEmit === false) {
+        return;
+      }
+
+      const insight = payload.insight?.trim();
+      const coachPanel = mergeCoachPanelByScope(
+        state.coachPanel,
+        payload.coachPanel ?? buildFallbackCoachPanel(currentText, Boolean(options?.frameBase64)),
+        scope,
+      );
+      const nextSignature = buildCoachScopeSignature(coachPanel, scope);
+
+      if (state.lastCoachScopeSignatures[scope] === nextSignature) {
+        return;
+      }
+
+      if (!insight) {
+        return;
+      }
+
+      set({
+        coachPanel,
+        lastCoachScopeSignatures: {
+          ...state.lastCoachScopeSignatures,
+          [scope]: nextSignature,
+        },
+        liveCoachInsight: insight,
+        liveCoach: {
+          id: `coach-${Date.now()}`,
+          tone: 'analytical',
+          title: 'Omni Live Coach',
+          body: insight,
+          generatedAt: new Date().toISOString(),
+          source: 'ai',
+        },
+      });
+    } catch (error) {
+      console.warn('fetchAICoachFeedback failed', error);
+      set((state) => ({
+        coachPanel: state.coachPanel,
+        liveCoachInsight: 'Omni ????????????????????????????',
+        liveCoach: {
+          ...state.liveCoach,
+          body: 'Omni ????????????????????????????',
+        },
+      }));
+    }
+  },
+  startCoachQA: async () => {
+    const state = usePracticeStore.getState();
+    const scene = getCurrentScene(state);
+    const transcriptText = getCurrentUserTranscript(state.transcript);
+
+    if (state.qaAutoAdvanceTimeoutId) {
+      clearTimeout(state.qaAutoAdvanceTimeoutId);
+    }
+
+    set({
+      qaEnabled: true,
+      qaPhase: 'preparing_context',
+      qaMessages: [],
+      qaCurrentQuestion: null,
+      qaCurrentGoal: null,
+      qaTranscriptCursor: countUserTranscriptLines(state.transcript),
+      qaSpeaking: false,
+      qaTurnId: null,
+      qaAutoAdvanceTimeoutId: null,
+    });
+
+    try {
+      const payload = await requestBackend<{ question: string; goal?: string }>('/api/qa/start', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          transcript: transcriptText,
+          language: state.activeLanguage,
+          sceneTitle: scene.title,
+          sceneGoal: scene.goal,
+          focusKeywords: scene.focusKeywords,
+        }),
+      });
+
+      const turnId = `qa-turn-${Date.now()}`;
+      const coachMessage: CoachChatMessage = {
+        id: turnId,
+        role: 'coach',
+        text: payload.question,
+        createdAt: new Date().toISOString(),
+        emphasis: 'primary',
+      };
+
+      set({
+        qaEnabled: true,
+        qaPhase: 'ai_asking',
+        qaMessages: [coachMessage],
+        qaCurrentQuestion: payload.question,
+        qaCurrentGoal: payload.goal?.trim() || null,
+        qaTranscriptCursor: countUserTranscriptLines(state.transcript),
+        qaSpeaking: false,
+        qaTurnId: turnId,
+        qaAutoAdvanceTimeoutId: null,
+      });
+    } catch (error) {
+      console.warn('startCoachQA failed', error);
+      const fallbackQuestion = '鍏堢敤涓€鍙ヨ瘽璇村嚭浣犺繖杞渶鎯宠鍚紬璁颁綇鐨勬牳蹇冪粨璁猴紝鐒跺悗鍐嶈ˉ涓€涓敮鎾戠悊鐢便€?;
+      const turnId = `qa-fallback-${Date.now()}`;
+      set({
+        qaEnabled: true,
+        qaPhase: 'ai_asking',
+        qaMessages: [
+          {
+            id: turnId,
+            role: 'coach',
+            text: '鍏堢敤涓€鍙ヨ瘽璇村嚭浣犺繖杞渶鎯宠鍚紬璁颁綇鐨勬牳蹇冪粨璁猴紝鐒跺悗鍐嶈ˉ涓€涓敮鎾戠悊鐢便€?,
+            createdAt: new Date().toISOString(),
+            emphasis: 'primary',
+          },
+        ],
+        qaCurrentQuestion: '鍏堢敤涓€鍙ヨ瘽璇村嚭浣犺繖杞渶鎯宠鍚紬璁颁綇鐨勬牳蹇冪粨璁猴紝鐒跺悗鍐嶈ˉ涓€涓敮鎾戠悊鐢便€?,
+        qaTranscriptCursor: state.transcript.filter((line) => line.speaker === 'user').length,
+      });
+
+      set({
+        qaCurrentGoal: '鍏堟妸鏍稿績缁撹璇寸煭銆佽娓呮锛屽啀缁欏嚭涓€涓渶鏈夊姏鐨勭悊鐢便€?,
+        qaTranscriptCursor: countUserTranscriptLines(state.transcript),
+        qaSpeaking: false,
+        qaTurnId: turnId,
+        qaAutoAdvanceTimeoutId: null,
+      });
+    }
+  },
+  continueCoachQA: async () => {
+    const state = usePracticeStore.getState();
+    if (!state.qaEnabled || state.qaPhase !== 'user_answering') {
+      return;
+    }
+
+    if (state.qaAutoAdvanceTimeoutId) {
+      clearTimeout(state.qaAutoAdvanceTimeoutId);
+    }
+
+    const userLines = state.transcript.filter((line) => line.speaker === 'user');
+    const answerText = userLines
+      .slice(state.qaTranscriptCursor)
+      .map((line) => line.text.trim())
+      .filter(Boolean)
+      .join('\n');
+
+    if (!answerText) {
+      set({
+        qaMessages: [
+          ...state.qaMessages,
+          {
+            id: `qa-system-${Date.now()}`,
+            role: 'system',
+            text: '鎴戣繕娌″惉鍒版柊鐨勫洖绛斿唴瀹癸紝鍏堢户缁涓ゅ彞锛屽啀鐐逛竴娆＄户缁璇濄€?,
+            createdAt: new Date().toISOString(),
+            emphasis: 'subtle',
+          },
+        ],
+      });
+      return;
+    }
+
+    const scene = getCurrentScene(state);
+    const userMessage: CoachChatMessage = {
+      id: `qa-user-${Date.now()}`,
+      role: 'user',
+      text: answerText,
+      createdAt: new Date().toISOString(),
+    };
+
+    set({
+      qaMessages: [...state.qaMessages, userMessage],
+      qaPhase: 'evaluating_answer',
+      qaSpeaking: false,
+      qaAutoAdvanceTimeoutId: null,
+    });
+
+    try {
+      const payload = await requestBackend<{
+        feedback: string;
+        nextQuestion?: string | null;
+        nextGoal?: string | null;
+        done?: boolean;
+      }>('/api/qa/continue', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          transcript: getCurrentUserTranscript(state.transcript),
+          answerText,
+          language: state.activeLanguage,
+          sceneTitle: scene.title,
+          sceneGoal: scene.goal,
+          focusKeywords: scene.focusKeywords,
+          currentQuestion: state.qaCurrentQuestion,
+          history: state.qaMessages.map((item) => ({ role: item.role, text: item.text })),
+        }),
+      });
+
+      const nextTurnId = payload.done ? null : `qa-next-${Date.now()}-q`;
+      const coachBlocks: CoachChatMessage[] = [
+        {
+          id: nextTurnId ?? `qa-feedback-${Date.now()}`,
+          role: 'coach',
+          text:
+            payload.done || !payload.nextQuestion
+              ? payload.feedback
+              : `${payload.feedback}\n\n${payload.nextQuestion}`,
+          createdAt: new Date().toISOString(),
+          emphasis: 'primary',
+        },
+      ];
+
+      set({
+        qaMessages: [...usePracticeStore.getState().qaMessages, ...coachBlocks],
+        qaCurrentQuestion: payload.done ? null : payload.nextQuestion ?? null,
+        qaCurrentGoal: payload.done ? null : payload.nextGoal?.trim() || null,
+        qaPhase: payload.done ? 'completed' : 'ai_asking',
+        qaTranscriptCursor: userLines.length,
+        qaSpeaking: false,
+        qaTurnId: nextTurnId,
+        qaAutoAdvanceTimeoutId: null,
+      });
+    } catch (error) {
+      console.warn('continueCoachQA failed', error);
+      const nextTurnId = `qa-fallback-next-${Date.now()}`;
+      set({
+        qaMessages: [
+          ...usePracticeStore.getState().qaMessages,
+          {
+            id: nextTurnId,
+            role: 'coach',
+            text: '杩欐鍥炵瓟鐨勬柟鍚戝浜嗭紝涓嬩竴鍙ユ妸缁撹鍐嶆彁鍓嶄竴鐐癸紝骞惰ˉ涓€涓洿鍏蜂綋鐨勪緥瀛愩€?,
+            createdAt: new Date().toISOString(),
+            emphasis: 'primary',
+          },
+        ],
+        qaCurrentQuestion: '涓嬩竴棰樿浣犲厛鎶婄粨璁鸿鍦ㄥ墠闈紝鍐嶈ˉ涓€涓洿鍏蜂綋鐨勪緥瀛愩€?,
+        qaCurrentGoal: '鎶婄粨璁烘斁鍦ㄧ涓€鍙ワ紝骞惰ˉ涓€涓叿浣撲緥瀛愩€?,
+        qaPhase: 'ai_asking',
+        qaTranscriptCursor: userLines.length,
+        qaSpeaking: false,
+        qaTurnId: nextTurnId,
+        qaAutoAdvanceTimeoutId: null,
+      });
+    }
+  },
+  markQAAudioPlaybackStarted: (turnId) =>
+    set((state) => {
+      if (!state.qaEnabled) {
+        return {};
+      }
+
+      if (turnId && state.qaTurnId && turnId !== state.qaTurnId) {
+        return {};
+      }
+
+      return {
+        qaSpeaking: true,
+        qaPhase: 'ai_asking',
+      };
+    }),
+  markQAAudioPlaybackEnded: (turnId) =>
+    set((state) => {
+      if (!state.qaEnabled) {
+        return {};
+      }
+
+      if (turnId && state.qaTurnId && turnId !== state.qaTurnId) {
+        return {};
+      }
+
+      if (state.qaAutoAdvanceTimeoutId) {
+        clearTimeout(state.qaAutoAdvanceTimeoutId);
+      }
+
+      return {
+        qaSpeaking: false,
+        qaPhase: state.qaCurrentQuestion ? 'user_answering' : 'completed',
+        qaTranscriptCursor: countUserTranscriptLines(state.transcript),
+        qaAutoAdvanceTimeoutId: null,
+      };
+    }),
+  closeCoachQA: () =>
+    set((state) => {
+      if (state.qaAutoAdvanceTimeoutId) {
+        clearTimeout(state.qaAutoAdvanceTimeoutId);
+      }
+
+      return {
+        qaEnabled: false,
+        qaPhase: 'idle',
+        qaMessages: [],
+        qaCurrentQuestion: null,
+        qaCurrentGoal: null,
+        qaTranscriptCursor: 0,
+        qaSpeaking: false,
+        qaTurnId: null,
+        qaAutoAdvanceTimeoutId: null,
+      };
+    }),
+  fetchFinalReport: async (fullTranscript) => {
+    const state = usePracticeStore.getState();
+
+    if (!fullTranscript.trim()) {
+      set({
+        status: 'finished',
+        currentReport: {
+          ...reportSeed,
+          id: `report-empty-${Date.now()}`,
+          generatedAt: new Date().toISOString(),
+          language: state.activeLanguage,
+          sceneId: state.activeSceneId,
+          sceneTitle: getCurrentScene(state).title,
+          headline: '鏈疆鍐呭杈冪煭锛屽厛瀹屾垚涓€娆″畬鏁存紨璁插惂',
+          overview: '褰撳墠褰曞埗鍐呭涓嶈冻浠ョ敓鎴愮ǔ瀹氳瘎鍒嗭紝寤鸿鑷冲皯瀹屾垚 20 绉掍互涓婄殑杩炵画琛ㄨ揪鍚庡啀鐢熸垚鎶ュ憡銆?,
+          overallScore: 60,
+          scoreTrend: {
+            delta: 0,
+            comparedToLabel: '鏈疆鏍锋湰涓嶈冻',
+          },
+          radar: {
+            contentStructure: 55,
+            languageExpression: 58,
+            fluencyRhythm: 57,
+            vocalDelivery: 60,
+            nonverbalPresence: 56,
+            audienceImpact: 54,
+          },
+          rawMetrics: [
+            { key: 'contentStructure', score: 55 },
+            { key: 'languageExpression', score: 58 },
+            { key: 'fluencyRhythm', score: 57 },
+            { key: 'vocalDelivery', score: 60 },
+            { key: 'nonverbalPresence', score: 56 },
+            { key: 'audienceImpact', score: 54 },
+          ],
+          highlights: ['褰曞埗閾捐矾宸茬粡璺戦€氾紝涓嬩竴姝ュ缓璁欢闀挎紨璁叉椂闀夸互鑾峰緱鏇寸ǔ瀹氳瘎浼般€?],
+          suggestions: defaultSuggestions,
+          coachSummary: '鍏堝畬鎴愪竴杞洿瀹屾暣鐨勮〃杈撅紝鍐嶈 AI 缁欏嚭鏇村噯纭殑璇勫垎涓庡缓璁€?,
+          comparison: historyRecords.map((record) => ({
+            recordId: record.id,
+            label: record.title,
+            overallScore: record.overallScore,
+          })),
+        },
+      });
+      return;
+    }
+
+    try {
+      const payload = await requestBackend<{
+        report?: {
+          totalScore: number;
+          summary: string;
+          radarScores: {
+            contentStructure: number;
+            languageExpression: number;
+            fluencyRhythm: number;
+            vocalDelivery: number;
+            nonverbalPresence: number;
+            audienceImpact: number;
+          };
+          actionableAdvice: string[];
+        };
+      }>('/api/final-report', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          transcript: fullTranscript,
+          language: state.activeLanguage,
+          sceneTitle: getCurrentScene(state).title,
+        }),
+      });
+
+      const report = payload.report;
+
+      if (!report) {
+        throw new Error('Missing report payload');
+      }
+
+      const mappedReport: ReportData = {
+        id: `report-${Date.now()}`,
+        generatedAt: new Date().toISOString(),
+        language: state.activeLanguage,
+        sceneId: state.activeSceneId,
+        sceneTitle: getCurrentScene(state).title,
+        headline: report.summary,
+        overview: `鏈疆缁煎悎璇勫垎涓?${report.totalScore} 鍒嗐€侫I 宸茬粨鍚堝畬鏁撮€愬瓧绋匡紝鎸?Speak Up 鍦烘櫙鍖栬瘎浠蜂綋绯伙紝浠庡唴瀹圭粨鏋勩€佽瑷€琛ㄨ揪銆佹祦鍒╁害涓庤妭濂忋€佽闊宠〃鐜般€侀潪璇█鍛堢幇涓庡惉浼楁劅鍏釜缁村害瀹屾垚璇勪及銆俙,
+        overallScore: report.totalScore,
+        stars: Math.max(1, Math.min(5, Number((report.totalScore / 20).toFixed(1)))),
+        scoreTrend: {
+          delta: report.totalScore - historyRecords[0].overallScore,
+          comparedToLabel: '杈冩渶杩戜竴娆¤缁?,
+        },
+        radar: report.radarScores,
+        radarMeta: reportSeed.radarMeta,
+        rawMetrics: [
+          { key: 'contentStructure', score: report.radarScores.contentStructure },
+          { key: 'languageExpression', score: report.radarScores.languageExpression },
+          { key: 'fluencyRhythm', score: report.radarScores.fluencyRhythm },
+          { key: 'vocalDelivery', score: report.radarScores.vocalDelivery },
+          { key: 'nonverbalPresence', score: report.radarScores.nonverbalPresence },
+          { key: 'audienceImpact', score: report.radarScores.audienceImpact },
+        ],
+        highlights: [
+          `缁煎悎鐐硅瘎锛?{report.summary}`,
+          `鏈涓恒€?{getCurrentScene(state).title}銆嶄笓椤硅瘎浼般€俙,
+          `閫愬瓧绋挎€婚暱搴︾害 ${fullTranscript.length} 涓瓧绗︼紝宸茬撼鍏ュ満鏅寲璇勫垎鍒嗘瀽銆俙,
+        ],
+        suggestions: report.actionableAdvice.slice(0, 3).map((detail, index) => ({
+          id: `suggest-final-${index + 1}`,
+          title: `寤鸿 ${index + 1}`,
+          detail,
+          priority: index === 0 ? 'high' : 'medium',
+          metricKey: (
+            ['contentStructure', 'fluencyRhythm', 'audienceImpact'][index] ?? 'contentStructure'
+          ) as RadarMetricKey,
+        })),
+        coachSummary: report.summary,
+        comparison: historyRecords.map((record) => ({
+          recordId: record.id,
+          label: record.title,
+          overallScore: record.overallScore,
+        })),
+      };
+
+      const latestState = usePracticeStore.getState();
+
+      if (latestState.analysisProgress >= 100) {
+        set({
+          status: 'finished',
+          currentReport: mappedReport,
+          pendingReport: null,
+          analysisProgress: 100,
+          analysisIntervalId: null,
+          liveCoach: {
+            id: `coach-final-${Date.now()}`,
+            tone: 'celebratory',
+            title: '鏈€缁堟姤鍛婂凡鐢熸垚',
+            body: report.summary,
+            generatedAt: new Date().toISOString(),
+            source: 'ai',
+          },
+          liveCoachInsight: report.summary,
+        });
+        return;
+      }
+
+      set({
+        pendingReport: mappedReport,
+        liveCoach: {
+          id: `coach-final-pending-${Date.now()}`,
+          tone: 'celebratory',
+          title: '鏈€缁堟姤鍛婂嵆灏嗗畬鎴?,
+          body: report.summary,
+          generatedAt: new Date().toISOString(),
+          source: 'ai',
+        },
+      });
+    } catch (error) {
+      console.warn('fetchFinalReport failed', error);
+      const latestState = usePracticeStore.getState();
+
+      if (latestState.analysisIntervalId) {
+        clearInterval(latestState.analysisIntervalId);
+      }
+
+      set({
+        status: 'finished',
+        currentReport: {
+          ...reportSeed,
+          id: `report-fallback-${Date.now()}`,
+          generatedAt: new Date().toISOString(),
+          language: state.activeLanguage,
+          sceneId: state.activeSceneId,
+          sceneTitle: getCurrentScene(state).title,
+          headline: '鎶ュ憡鐢熸垚閬囧埌娉㈠姩锛屽凡鍥為€€鍒板熀纭€璇勪及缁撴灉',
+          overview: '鏈€缁堟姤鍛婃帴鍙ｆ殏鏃舵湭杩斿洖鏈夋晥 JSON锛屾湰椤垫樉绀虹殑鏄熀纭€鍏滃簳鎶ュ憡銆傚缓璁◢鍚庨噸鏂板皾璇曘€?,
+        },
+        pendingReport: null,
+        analysisProgress: 100,
+        analysisIntervalId: null,
+        liveCoachInsight: '鏈€缁堟姤鍛婄敓鎴愬け璐ワ紝宸蹭娇鐢ㄥ厹搴曟姤鍛婂睍绀虹粨鏋溿€?,
+      });
+    }
+  },
+  beginAnalyzing: async () => {
+    await usePracticeStore.getState().stopRecording();
+
+    set({
+      status: 'analyzing',
+      liveCoach: {
+        id: 'coach-analyzing',
+        tone: 'analytical',
+        title: 'AI 姝ｅ湪鐢熸垚鎶ュ憡',
+        body: '宸插畬鎴愭湰杞綍闊虫敹闆嗭紝姝ｅ湪鏁村悎瀛楀箷銆佽妭濂忎笌琛ㄨ揪琛ㄧ幇锛屽噯澶囩敓鎴愭姤鍛娿€?,
+        generatedAt: new Date().toISOString(),
+        source: 'system',
+      },
+      liveCoachInsight: '鏈疆璇煶宸叉敹闆嗗畬鎴愶紝姝ｅ湪鐢熸垚鎬荤粨鎶ュ憡銆?,
+    });
+  },
+  finishSession: (report = reportSeed) =>
+    set({
+      status: 'finished',
+      currentReport: report,
+      liveCoach: {
+        id: 'coach-finished',
+        tone: 'celebratory',
+        title: '鏈疆璁粌瀹屾垚',
+        body: '鎶ュ憡宸插噯澶囧ソ锛屼笅涓€姝ュ彲浠ユ煡鐪嬮浄杈惧浘銆佽鍔ㄥ缓璁拰鍘嗗彶瓒嬪娍瀵规瘮銆?,
+        generatedAt: new Date().toISOString(),
+        source: 'system',
+      },
+      liveCoachInsight: '鏈疆璁粌宸插畬鎴愶紝鎶ュ憡鍜屽缓璁凡缁忓噯澶囧ソ銆?,
+    }),
+  resetSession: () =>
+    set((state) => {
+      if (state.transcriptionIntervalId) {
+        clearInterval(state.transcriptionIntervalId);
+      }
+
+      if (state.analysisIntervalId) {
+        clearInterval(state.analysisIntervalId);
+      }
+
+      if (state.activeRecording) {
+        void stopAndUnloadRecording(state.activeRecording);
+      }
+
+      if (state.qaAutoAdvanceTimeoutId) {
+        clearTimeout(state.qaAutoAdvanceTimeoutId);
+      }
+
+      return {
+        status: 'preparing',
+        recordingStartedAt: null,
+        recordingElapsedMs: 0,
+        transcript: [],
+        currentReport: null,
+          pendingReport: null,
+          coachPanel: coachPanelSeed,
+          recentVoiceSegments: [],
+          voiceContentFlushTimeoutId: null,
+          lastCoachScopeSignatures: {
+          voice_content: null,
+          body_visual: null,
+        },
+        liveCoach: liveCoachSeed,
+        liveCoachInsight: liveCoachSeed.body,
+        activeRecording: null,
+        transcriptionIntervalId: null,
+        analysisProgress: 0,
+        analysisIntervalId: null,
+        qaEnabled: false,
+        qaPhase: 'idle',
+        qaMessages: [],
+        qaCurrentQuestion: null,
+        qaCurrentGoal: null,
+        qaTranscriptCursor: 0,
+        qaSpeaking: false,
+        qaTurnId: null,
+        qaAutoAdvanceTimeoutId: null,
+      };
+    }),
+  hydrateMockSession: () =>
+    set({
+      status: 'finished',
+      activeSceneId: sceneCatalog[0].id,
+      activeLanguage: 'zh-CN',
+      history: historyRecords,
+      liveCoach: liveCoachSeed,
+      liveCoachInsight: liveCoachSeed.body,
+        coachPanel: coachPanelSeed,
+        recentVoiceSegments: [],
+        voiceContentFlushTimeoutId: null,
+        lastCoachScopeSignatures: {
+        voice_content: null,
+        body_visual: null,
+      },
+      transcript: transcriptSeed,
+      currentReport: reportSeed,
+      pendingReport: null,
+      recordingStartedAt: null,
+      recordingElapsedMs: 164000,
+      analysisProgress: 100,
+      isMicEnabled: true,
+      isCameraEnabled: true,
+      activeRecording: null,
+      transcriptionIntervalId: null,
+      analysisIntervalId: null,
+      qaEnabled: false,
+      qaPhase: 'idle',
+      qaMessages: [],
+      qaCurrentQuestion: null,
+      qaCurrentGoal: null,
+      qaTranscriptCursor: 0,
+      qaSpeaking: false,
+      qaTurnId: null,
+      qaAutoAdvanceTimeoutId: null,
+    }),
+}));
+
+function armQAAutoAdvanceTimer(latestText = '') {
+  const state = usePracticeStore.getState();
+
+  if (!state.qaEnabled || state.qaPhase !== 'user_answering') {
+    return;
+  }
+
+  if (state.qaAutoAdvanceTimeoutId) {
+    clearTimeout(state.qaAutoAdvanceTimeoutId);
+  }
+
+  const timeoutId = setTimeout(() => {
+    const latestState = usePracticeStore.getState();
+    if (!latestState.qaEnabled || latestState.qaPhase !== 'user_answering') {
+      return;
+    }
+
+    void latestState.continueCoachQA();
+  }, getQAAutoAdvanceDelay(latestText));
+
+  usePracticeStore.setState({
+    qaAutoAdvanceTimeoutId: timeoutId,
+  });
+}
+
+export const practiceStoreMock = {
+  sceneCatalog,
+  historyRecords,
+  liveCoachSeed,
+  transcriptSeed,
+  reportSeed,
+  coachPanelSeed,
+};

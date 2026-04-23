@@ -1,10 +1,13 @@
-import { Audio } from 'expo-av';
+﻿import { Audio } from 'expo-av';
 import { create } from 'zustand';
 
 import {
+  type CoachChatMessage,
+  type CoachPanelState,
   type LiveCoachMessage,
   type PracticeLanguage,
   type PracticeScene,
+  type QAPhase,
   type RadarMetricKey,
   type RecordingStatus,
   type ReportData,
@@ -15,8 +18,47 @@ import {
 
 const now = '2026-04-11T21:45:00+08:00';
 const API_BASE_URL = (process.env.EXPO_PUBLIC_API_BASE_URL ?? 'http://127.0.0.1:8787').replace(/\/$/, '');
-const RECORDING_SEGMENT_MS = 3000;
+const RECORDING_SEGMENT_MS = 1200;
+const TRANSCRIPT_SILENCE_WINDOW_MS = 2000;
 const RECORDING_FILE_TYPE = 'audio/x-m4a';
+const BODY_VISUAL_MIN_TRANSCRIPT_CHARS = 18;
+
+let transcriptFinalizeTimeout: ReturnType<typeof setTimeout> | null = null;
+let voiceContentFeedbackTimeout: ReturnType<typeof setTimeout> | null = null;
+let transcriptSegmentFinalized = true;
+
+const coachPanelSeed: CoachPanelState = {
+  summary: {
+    title: 'AI 正在倾听',
+    detail: '实时反馈会随着语音、内容和画面持续刷新。',
+    sourceDimension: null,
+    updatedAtMs: 0,
+  },
+  bodyExpression: {
+    id: 'body_expression',
+    status: 'analyzing',
+    headline: '观察肢体状态',
+    detail: '保持自然打开的镜头状态。',
+    updatedAtMs: 0,
+    source: 'system',
+  },
+  voicePacing: {
+    id: 'voice_pacing',
+    status: 'analyzing',
+    headline: '观察语音节奏',
+    detail: '先稳住语速和句尾收束。',
+    updatedAtMs: 0,
+    source: 'system',
+  },
+  contentExpression: {
+    id: 'content_expression',
+    status: 'analyzing',
+    headline: '观察内容表达',
+    detail: '继续把主线往前推进。',
+    updatedAtMs: 0,
+    source: 'system',
+  },
+};
 
 const sceneCatalog: PracticeScene[] = [
   {
@@ -106,39 +148,39 @@ const historyRecords: SpeechRecord[] = [
   {
     id: 'record-2026-04-09-host',
     sceneId: 'host-cn',
-    sceneTitle: '???Host?',
-    title: '??? ? ????',
+    sceneTitle: '主持（Host）',
+    title: '上周三 · 中文主持',
     language: 'zh-CN',
     createdAt: '2026-04-09T19:30:00+08:00',
     durationSec: 196,
     overallScore: 76,
     scoreDelta: 4,
     summary:
-      '?????????????????????????????????????????????????',
+      '开场自然，现场气口比之前更稳，但转向互动时的承接还可以再更果断一点。',
     metricChanges: [
-      { key: 'audienceImpact', label: '????', delta: 8 },
-      { key: 'nonverbalPresence', label: '????', delta: 6 },
-      { key: 'fluencyRhythm', label: '????', delta: -2 },
+      { key: 'audienceImpact', label: '控场', delta: 8 },
+      { key: 'nonverbalPresence', label: '互动', delta: 6 },
+      { key: 'fluencyRhythm', label: '节奏', delta: -2 },
     ],
-    previewTranscript: '???????????????????????????????????',
+    previewTranscript: '今天的活动我们会先快速热场，再进入今晚最值得期待的核心环节。',
     reportId: 'report-2026-04-09-host',
   },
   {
     id: 'record-2026-04-07-guest',
     sceneId: 'presentation-core',
-    sceneTitle: '?????Presentation?',
-    title: '??? ? English sharing',
+    sceneTitle: '主题分享（Presentation）',
+    title: '上周五 · English sharing',
     language: 'en-US',
     createdAt: '2026-04-07T20:15:00+08:00',
     durationSec: 224,
     overallScore: 81,
     scoreDelta: 7,
     summary:
-      '???????????????????????????????????????',
+      '观点层次清楚，英语表达稳定，结尾如果再补一个更强的 takeaway，会更完整。',
     metricChanges: [
-      { key: 'contentStructure', label: '????', delta: 7 },
-      { key: 'languageExpression', label: '????', delta: 4 },
-      { key: 'audienceImpact', label: '?????', delta: -1 },
+      { key: 'contentStructure', label: '逻辑', delta: 7 },
+      { key: 'languageExpression', label: '表达', delta: 4 },
+      { key: 'audienceImpact', label: '收束', delta: -1 },
     ],
     previewTranscript:
       'Today I want to share one key lesson from building under pressure: clarity wins attention.',
@@ -147,21 +189,21 @@ const historyRecords: SpeechRecord[] = [
   {
     id: 'record-2026-04-11-impromptu',
     sceneId: 'impromptu-cn',
-    sceneTitle: '?????Impromptu?',
-    title: '??? ? ??????',
+    sceneTitle: '即兴表达（Impromptu）',
+    title: '本周一 · 脱口秀试讲',
     language: 'zh-CN',
     createdAt: '2026-04-11T18:40:00+08:00',
     durationSec: 143,
     overallScore: 73,
     scoreDelta: 2,
     summary:
-      '???????????????????????????????????????????',
+      '关键观点的铺垫做得不错，不过中段仍有几次重启，导致整体连贯性还可以继续提纯。',
     metricChanges: [
-      { key: 'fluencyRhythm', label: '????', delta: 5 },
-      { key: 'audienceImpact', label: '????', delta: 3 },
-      { key: 'contentStructure', label: '????', delta: -4 },
+      { key: 'fluencyRhythm', label: '节奏', delta: 5 },
+      { key: 'audienceImpact', label: '表现力', delta: 3 },
+      { key: 'contentStructure', label: '停顿', delta: -4 },
     ],
-    previewTranscript: '???????????????????????????????????',
+    previewTranscript: '我先说结论，这个产品最打动人的地方，不是功能多，而是你真的会愿意打开它。',
     reportId: 'report-2026-04-11-impromptu',
   },
 ];
@@ -336,6 +378,181 @@ async function transcribeRecordingSegment(uri: string, language: PracticeLanguag
   return payload.text?.trim() ?? '';
 }
 
+function clearTranscriptTimers() {
+  if (transcriptFinalizeTimeout) {
+    clearTimeout(transcriptFinalizeTimeout);
+    transcriptFinalizeTimeout = null;
+  }
+
+  if (voiceContentFeedbackTimeout) {
+    clearTimeout(voiceContentFeedbackTimeout);
+    voiceContentFeedbackTimeout = null;
+  }
+}
+
+function normalizeComparableText(text: string) {
+  return text.replace(/[，。！？、；：,.!?;:\s]/g, '').trim();
+}
+
+function getLooseSuffix(previousText: string, incomingText: string) {
+  const prev = normalizeComparableText(previousText);
+  const next = normalizeComparableText(incomingText);
+
+  if (!prev || !next) {
+    return incomingText.trim();
+  }
+
+  if (next === prev || next.includes(prev)) {
+    return incomingText.trim();
+  }
+
+  const limit = Math.min(prev.length, next.length);
+
+  for (let overlap = limit; overlap >= 3; overlap -= 1) {
+    if (prev.slice(-overlap) === next.slice(0, overlap)) {
+      return incomingText.trim();
+    }
+  }
+
+  return incomingText.trim();
+}
+
+function looksLikeWeakPartial(text: string) {
+  const compact = text.replace(/\s+/g, '').trim();
+
+  if (!compact) {
+    return true;
+  }
+
+  if (compact.length <= 6) {
+    return true;
+  }
+
+  return /^(然后|就是|所以|那个|这个|呃|嗯|啊|然后呢|还有|我觉得|就是说|还行吧|其实)/.test(compact);
+}
+
+function hasStrongEnding(text: string) {
+  return /[。！？!?]$/.test(text.trim());
+}
+
+function sanitizeTranscriptChunk(text: string) {
+  const raw = text.replace(/\s+/g, ' ').trim().replace(/^[，。！？、,.!?;:\-]+/, '');
+
+  if (!raw) {
+    return '';
+  }
+
+  const trailingFillerTrimmed = raw.replace(
+    /(?:[，,\s]*(?:嗯+|呃+|额+|啊+|那个|这个|就是|然后|然后呢|你知道吗))+[，,。.!?？]*$/g,
+    '',
+  ).trim();
+
+  const candidate = trailingFillerTrimmed || raw;
+  const lexicalOnly = candidate
+    .replace(/[，。！？、；：,.!?;:\s]/g, '')
+    .replace(/(?:嗯+|呃+|额+|啊+|那个|这个|就是|然后|然后呢|好吧|还行吧|你知道吗)/g, '')
+    .trim();
+
+  if (!lexicalOnly) {
+    return '';
+  }
+
+  return candidate
+    .replace(/([，,]\s*){2,}/g, '，')
+    .replace(/([。！？!?]){2,}/g, '$1')
+    .trim();
+}
+
+function shouldMergeIntoPreviousCommittedLine(previousText: string, incomingText: string) {
+  const previous = previousText.trim();
+  const incoming = incomingText.trim();
+
+  if (!previous || !incoming) {
+    return false;
+  }
+
+  if (!hasStrongEnding(previous)) {
+    return true;
+  }
+
+  if (/^[，、,.:：;；!?！？]/.test(incoming)) {
+    return true;
+  }
+
+  if (looksLikeWeakPartial(incoming)) {
+    return true;
+  }
+
+  const suffix = getLooseSuffix(incoming, previous);
+  if (suffix !== incoming && suffix.trim().length > 0) {
+    return true;
+  }
+
+  return false;
+}
+
+function mergeTranscriptIntoLatest(previousText: string, incomingText: string) {
+  const previous = previousText.trim();
+  const incoming = incomingText.trim();
+
+  if (!previous) {
+    return incoming;
+  }
+
+  if (!incoming) {
+    return previous;
+  }
+
+  const normalizedPrevious = normalizeComparableText(previous);
+  const normalizedIncoming = normalizeComparableText(incoming);
+
+  if (!normalizedIncoming) {
+    return previous;
+  }
+
+  if (normalizedPrevious === normalizedIncoming) {
+    return previous.length >= incoming.length ? previous : incoming;
+  }
+
+  if (normalizedIncoming.startsWith(normalizedPrevious)) {
+    return incoming;
+  }
+
+  if (normalizedPrevious.startsWith(normalizedIncoming)) {
+    return previous;
+  }
+
+  if (looksLikeWeakPartial(incoming) || !hasStrongEnding(previous)) {
+    return `${previous.replace(/[，。！？!?]$/, '')}，${getLooseSuffix(previous, incoming)}`.replace(/，{2,}/g, '，');
+  }
+
+  return `${previous}\n${incoming}`;
+}
+
+function scheduleVoiceContentTurnFeedback() {
+  if (voiceContentFeedbackTimeout) {
+    clearTimeout(voiceContentFeedbackTimeout);
+  }
+
+  voiceContentFeedbackTimeout = setTimeout(() => {
+    const state = usePracticeStore.getState();
+
+    if (state.status !== 'recording') {
+      return;
+    }
+
+    const fullText = state.transcript
+      .filter((line) => line.speaker === 'user')
+      .map((line) => line.text.trim())
+      .filter(Boolean)
+      .join('\n');
+
+    if (fullText) {
+      void state.fetchAICoachFeedback(fullText, { scope: 'voice_content' });
+    }
+  }, TRANSCRIPT_SILENCE_WINDOW_MS);
+}
+
 export interface PracticeStoreState {
   status: RecordingStatus;
   activeSceneId: string;
@@ -344,6 +561,7 @@ export interface PracticeStoreState {
   history: SpeechRecord[];
   liveCoach: LiveCoachMessage;
   liveCoachInsight: string;
+  coachPanel: CoachPanelState;
   transcript: TranscriptLine[];
   currentReport: ReportData | null;
   pendingReport: ReportData | null;
@@ -352,6 +570,12 @@ export interface PracticeStoreState {
   analysisProgress: number;
   isMicEnabled: boolean;
   isCameraEnabled: boolean;
+  qaEnabled: boolean;
+  qaPhase: QAPhase;
+  qaMessages: CoachChatMessage[];
+  qaCurrentGoal: string | null;
+  qaSpeaking: boolean;
+  qaTurnId: string | null;
   activeRecording: Audio.Recording | null;
   transcriptionIntervalId: ReturnType<typeof setInterval> | null;
   analysisIntervalId: ReturnType<typeof setInterval> | null;
@@ -364,7 +588,15 @@ export interface PracticeStoreState {
   startRecording: () => Promise<void>;
   stopRecording: () => Promise<void>;
   stopRecordingAndGenerateReport: () => Promise<void>;
-  fetchAICoachFeedback: (currentText: string) => Promise<void>;
+  fetchAICoachFeedback: (
+    currentText: string,
+    options?: { frameBase64?: string | null; scope?: 'voice_content' | 'body_visual' },
+  ) => Promise<void>;
+  startCoachQA: () => Promise<void>;
+  continueCoachQA: () => Promise<void>;
+  markQAAudioPlaybackStarted: (turnId?: string | null) => void;
+  markQAAudioPlaybackEnded: (turnId?: string | null) => void;
+  closeCoachQA: () => void;
   fetchFinalReport: (fullTranscript: string) => Promise<void>;
   beginAnalyzing: () => Promise<void>;
   finishSession: (report?: ReportData) => void;
@@ -380,6 +612,7 @@ export const usePracticeStore = create<PracticeStoreState>((set) => ({
   history: historyRecords,
   liveCoach: liveCoachSeed,
   liveCoachInsight: liveCoachSeed.body,
+  coachPanel: coachPanelSeed,
   transcript: transcriptSeed,
   currentReport: reportSeed,
   pendingReport: null,
@@ -388,6 +621,12 @@ export const usePracticeStore = create<PracticeStoreState>((set) => ({
   analysisProgress: 0,
   isMicEnabled: true,
   isCameraEnabled: true,
+  qaEnabled: false,
+  qaPhase: 'idle',
+  qaMessages: [],
+  qaCurrentGoal: null,
+  qaSpeaking: false,
+  qaTurnId: null,
   activeRecording: null,
   transcriptionIntervalId: null,
   analysisIntervalId: null,
@@ -399,20 +638,70 @@ export const usePracticeStore = create<PracticeStoreState>((set) => ({
       transcript: [...state.transcript, line],
     })),
   appendTranscriptText: (text, speaker = 'user') =>
-    set((state) => ({
-      transcript: [
-        ...state.transcript,
-        {
+    set((state) => {
+      const trimmed = sanitizeTranscriptChunk(text);
+
+      if (!trimmed) {
+        return state;
+      }
+
+      const timestampMs = state.recordingStartedAt
+        ? Date.now() - new Date(state.recordingStartedAt).getTime()
+        : 0;
+
+      if (speaker !== 'user') {
+        return {
+          transcript: [
+            ...state.transcript,
+            {
+              id: `line-${Date.now()}`,
+              text: trimmed,
+              timestampMs,
+              confidence: 0.98,
+              speaker,
+            },
+          ],
+        };
+      }
+
+      const transcript = [...state.transcript];
+      const lastLine = transcript[transcript.length - 1];
+
+      if (
+        lastLine?.speaker === 'user' &&
+        (!transcriptSegmentFinalized || shouldMergeIntoPreviousCommittedLine(lastLine.text, trimmed))
+      ) {
+        transcript[transcript.length - 1] = {
+          ...lastLine,
+          text: mergeTranscriptIntoLatest(lastLine.text, trimmed),
+          timestampMs,
+        };
+      } else {
+        transcript.push({
           id: `line-${Date.now()}`,
-          text,
-          timestampMs: state.recordingStartedAt
-            ? Date.now() - new Date(state.recordingStartedAt).getTime()
-            : 0,
+          text: trimmed,
+          timestampMs,
           confidence: 0.98,
           speaker,
-        },
-      ],
-    })),
+        });
+      }
+
+      transcriptSegmentFinalized = false;
+
+      if (transcriptFinalizeTimeout) {
+        clearTimeout(transcriptFinalizeTimeout);
+      }
+
+      transcriptFinalizeTimeout = setTimeout(() => {
+        transcriptSegmentFinalized = true;
+      }, TRANSCRIPT_SILENCE_WINDOW_MS);
+
+      scheduleVoiceContentTurnFeedback();
+
+      return {
+        transcript,
+      };
+    }),
   updateLiveCoach: (message) => set({ liveCoach: message, liveCoachInsight: message.body }),
   startRecording: async () => {
     const { granted } = await Audio.requestPermissionsAsync();
@@ -467,8 +756,6 @@ export const usePracticeStore = create<PracticeStoreState>((set) => ({
 
           if (transcriptText) {
             usePracticeStore.getState().appendTranscriptText(transcriptText, 'user');
-            const fullText = [...usePracticeStore.getState().transcript.map((line) => line.text), transcriptText].join('\n');
-            await usePracticeStore.getState().fetchAICoachFeedback(fullText);
           }
         }
       } catch (error) {
@@ -489,15 +776,22 @@ export const usePracticeStore = create<PracticeStoreState>((set) => ({
       activeRecording: firstSegment,
       transcriptionIntervalId: intervalId,
       transcript: [],
+      coachPanel: coachPanelSeed,
       liveCoach: {
         id: 'coach-recording',
         tone: 'encouraging',
         title: '演讲进行中',
-        body: '麦克风已开启，正在按 3 秒分段识别语音，并把内容发送给 AI 教练。',
+        body: '麦克风已开启，Omni 教练会持续整合语音、内容与画面，刷新实时反馈。',
         generatedAt: startedAt,
         source: 'system',
       },
-      liveCoachInsight: '录制已开始，等待第一段语音识别结果。',
+      liveCoachInsight: '录制已开始，等待第一轮字幕与 Omni 实时教练结果返回。',
+      qaEnabled: false,
+      qaPhase: 'idle',
+      qaMessages: [],
+      qaCurrentGoal: null,
+      qaSpeaking: false,
+      qaTurnId: null,
     });
   },
   stopRecording: async () => {
@@ -523,8 +817,15 @@ export const usePracticeStore = create<PracticeStoreState>((set) => ({
 
     if (finalTranscript) {
       usePracticeStore.getState().appendTranscriptText(finalTranscript, 'user');
-      const fullText = [...usePracticeStore.getState().transcript.map((line) => line.text), finalTranscript].join('\n');
-      await usePracticeStore.getState().fetchAICoachFeedback(fullText);
+      clearTranscriptTimers();
+      transcriptSegmentFinalized = true;
+      const fullText = usePracticeStore
+        .getState()
+        .transcript.filter((line) => line.speaker === 'user')
+        .map((line) => line.text.trim())
+        .filter(Boolean)
+        .join('\n');
+      await usePracticeStore.getState().fetchAICoachFeedback(fullText, { scope: 'voice_content' });
     }
 
     set((currentState) => ({
@@ -632,14 +933,16 @@ export const usePracticeStore = create<PracticeStoreState>((set) => ({
 
     await usePracticeStore.getState().fetchFinalReport(fullTranscript);
   },
-  fetchAICoachFeedback: async (currentText) => {
-    if (!currentText.trim()) {
+  fetchAICoachFeedback: async (currentText, options) => {
+    const scope = options?.scope ?? 'voice_content';
+
+    if (scope === 'voice_content' && !currentText.trim()) {
       return;
     }
 
     try {
       const state = usePracticeStore.getState();
-      const payload = await requestBackend<{ insight?: string }>('/api/coach', {
+      const payload = await requestBackend<{ insight?: string; coachPanel?: CoachPanelState }>('/api/coach', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -647,24 +950,49 @@ export const usePracticeStore = create<PracticeStoreState>((set) => ({
         body: JSON.stringify({
           text: currentText,
           language: state.activeLanguage,
-          sceneTitle: state.scenes.find((scene) => scene.id === state.activeSceneId)?.title ?? '????',
-          sceneGoal: state.scenes.find((scene) => scene.id === state.activeSceneId)?.goal ?? '???????????',
+          sceneTitle: state.scenes.find((scene) => scene.id === state.activeSceneId)?.title ?? '演讲训练',
+          sceneGoal: state.scenes.find((scene) => scene.id === state.activeSceneId)?.goal ?? '完成当前场景的表达任务',
           focusKeywords: state.scenes.find((scene) => scene.id === state.activeSceneId)?.focusKeywords ?? [],
+          scope,
+          frameBase64: options?.frameBase64 ?? null,
         }),
       });
 
       const insight = payload.insight?.trim();
+      const transcriptChars = state.transcript
+        .filter((line) => line.speaker === 'user')
+        .map((line) => line.text)
+        .join('')
+        .replace(/\s+/g, '').length;
+
+      if (scope === 'body_visual') {
+        set((currentState) => ({
+          coachPanel: payload.coachPanel
+            ? {
+                ...currentState.coachPanel,
+                ...payload.coachPanel,
+                bodyExpression: payload.coachPanel.bodyExpression ?? currentState.coachPanel.bodyExpression,
+                summary:
+                  transcriptChars >= BODY_VISUAL_MIN_TRANSCRIPT_CHARS && payload.coachPanel.summary
+                    ? payload.coachPanel.summary
+                    : currentState.coachPanel.summary,
+              }
+            : currentState.coachPanel,
+        }));
+        return;
+      }
 
       if (!insight) {
         return;
       }
 
       set({
+        coachPanel: payload.coachPanel ?? state.coachPanel,
         liveCoachInsight: insight,
         liveCoach: {
           id: `coach-${Date.now()}`,
           tone: 'analytical',
-          title: 'AI Live Coach',
+          title: 'Omni Live Coach',
           body: insight,
           generatedAt: new Date().toISOString(),
           source: 'ai',
@@ -673,10 +1001,59 @@ export const usePracticeStore = create<PracticeStoreState>((set) => ({
     } catch (error) {
       console.warn('fetchAICoachFeedback failed', error);
       set({
-        liveCoachInsight: 'AI 教练暂时没有返回建议，请检查本地代理服务或 DeepSeek 配置。',
+        liveCoachInsight: 'Omni 实时教练暂时没有返回建议，请检查本地代理服务或模型配置。',
       });
     }
   },
+  startCoachQA: async () => {
+    set({
+      qaEnabled: true,
+      qaPhase: 'ai_asking',
+      qaCurrentGoal: '先用一句话说出核心结论。',
+      qaSpeaking: false,
+      qaTurnId: `qa-turn-${Date.now()}`,
+      qaMessages: [
+        {
+          id: `qa-coach-${Date.now()}`,
+          role: 'coach',
+          text: '先用一句话说出你这轮最想让听众记住的核心结论。',
+          createdAt: new Date().toISOString(),
+          emphasis: 'primary',
+        },
+      ],
+    });
+  },
+  continueCoachQA: async () => {
+    set((state) => ({
+      qaPhase: 'evaluating_answer',
+      qaMessages: [
+        ...state.qaMessages,
+        {
+          id: `qa-system-${Date.now()}`,
+          role: 'system',
+          text: '下一轮请把结论提前，并补一个具体例子。',
+          createdAt: new Date().toISOString(),
+          emphasis: 'subtle',
+        },
+      ],
+    }));
+  },
+  markQAAudioPlaybackStarted: () => set({ qaSpeaking: true }),
+  markQAAudioPlaybackEnded: (turnId) =>
+    set((state) => ({
+      qaSpeaking: false,
+      qaPhase: state.qaEnabled ? 'user_answering' : state.qaPhase,
+      qaTurnId: turnId ?? state.qaTurnId,
+    })),
+  closeCoachQA: () =>
+    set({
+      qaEnabled: false,
+      qaPhase: 'idle',
+      qaMessages: [],
+      qaCurrentGoal: null,
+      qaSpeaking: false,
+      qaTurnId: null,
+    }),
   fetchFinalReport: async (fullTranscript) => {
     const state = usePracticeStore.getState();
 
@@ -766,7 +1143,7 @@ export const usePracticeStore = create<PracticeStoreState>((set) => ({
         sceneId: state.activeSceneId,
         sceneTitle: state.scenes.find((scene) => scene.id === state.activeSceneId)?.title ?? reportSeed.sceneTitle,
         headline: report.summary,
-        overview: `??????? ${report.totalScore} ??AI ?????????? Speak Up ?????????????????????????????????????????????????`,
+        overview: `本轮综合评分为 ${report.totalScore} 分。AI 已结合完整逐字稿、场景目标与 Speak Out 六维评价体系完成分析，并生成了针对本轮表达的总结与建议。`,
         overallScore: report.totalScore,
         stars: Math.max(1, Math.min(5, Number((report.totalScore / 20).toFixed(1)))),
         scoreTrend: {
@@ -897,8 +1274,15 @@ export const usePracticeStore = create<PracticeStoreState>((set) => ({
     }),
   resetSession: () =>
     set((state) => {
+      clearTranscriptTimers();
+      transcriptSegmentFinalized = true;
+
       if (state.transcriptionIntervalId) {
         clearInterval(state.transcriptionIntervalId);
+      }
+
+      if (state.analysisIntervalId) {
+        clearInterval(state.analysisIntervalId);
       }
 
       if (state.activeRecording) {
@@ -914,10 +1298,17 @@ export const usePracticeStore = create<PracticeStoreState>((set) => ({
         pendingReport: null,
         liveCoach: liveCoachSeed,
         liveCoachInsight: liveCoachSeed.body,
+        coachPanel: coachPanelSeed,
         activeRecording: null,
         transcriptionIntervalId: null,
         analysisProgress: 0,
         analysisIntervalId: null,
+        qaEnabled: false,
+        qaPhase: 'idle',
+        qaMessages: [],
+        qaCurrentGoal: null,
+        qaSpeaking: false,
+        qaTurnId: null,
       };
     }),
   hydrateMockSession: () =>

@@ -17,6 +17,19 @@ export type RadarMetricKey =
   | 'nonverbalPresence'
   | 'audienceImpact';
 
+export type CoachDimensionId = 'body_expression' | 'voice_pacing' | 'content_expression';
+
+export type CoachDisplayStatus = 'doing_well' | 'stable' | 'adjust_now' | 'analyzing';
+
+export type QAPhase =
+  | 'idle'
+  | 'preparing_context'
+  | 'ai_asking'
+  | 'user_answering'
+  | 'evaluating_answer'
+  | 'ready_next_turn'
+  | 'completed';
+
 export interface PracticeScene {
   id: string;
   key: PracticeSceneKey;
@@ -108,7 +121,7 @@ export interface TranscriptLine {
   text: string;
   timestampMs: number;
   confidence: number;
-  speaker: 'user' | 'ai-note';
+  speaker: 'user' | 'ai-note' | 'coach';
 }
 
 export interface LiveCoachMessage {
@@ -118,4 +131,33 @@ export interface LiveCoachMessage {
   body: string;
   generatedAt: string;
   source: 'system' | 'ai';
+}
+
+export interface CoachDimensionState {
+  id: CoachDimensionId;
+  status: CoachDisplayStatus;
+  headline: string;
+  detail: string;
+  updatedAtMs: number;
+  source: 'system' | 'ai';
+}
+
+export interface CoachPanelState {
+  summary: {
+    title: string;
+    detail: string;
+    sourceDimension: CoachDimensionId | null;
+    updatedAtMs: number;
+  };
+  bodyExpression: CoachDimensionState;
+  voicePacing: CoachDimensionState;
+  contentExpression: CoachDimensionState;
+}
+
+export interface CoachChatMessage {
+  id: string;
+  role: 'coach' | 'user' | 'system';
+  text: string;
+  createdAt: string;
+  emphasis?: 'primary' | 'subtle';
 }

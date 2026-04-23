@@ -28,9 +28,9 @@ export default function HistoryScreen() {
     <View style={styles.screen}>
       <View style={styles.header}>
         <Text style={styles.eyebrow}>History</Text>
-        <Text style={styles.title}>??????</Text>
+        <Text style={styles.title}>历史演讲记录</Text>
         <Text style={styles.subtitle}>
-          ? Speak Up ?????????????????????????????????????
+          按 Speak Up 场景化评价体系回看每一轮训练，重点关注场景目标、关键提升点与长期变化趋势。
         </Text>
       </View>
 
@@ -51,21 +51,21 @@ export default function HistoryScreen() {
                 </View>
                 <View style={styles.scoreBubble}>
                   <Text style={styles.scoreText}>{item.overallScore}</Text>
-                  <Text style={styles.scoreCaption}>???</Text>
+                  <Text style={styles.scoreCaption}>综合分</Text>
                 </View>
               </View>
 
               <View style={styles.metaRow}>
                 <Text style={styles.metaText}>{new Date(item.createdAt).toLocaleDateString('zh-CN')}</Text>
-                <Text style={styles.metaDivider}>?</Text>
+                <Text style={styles.metaDivider}>•</Text>
                 <Text style={styles.metaText}>{formatDuration(item.durationSec)}</Text>
-                <Text style={styles.metaDivider}>?</Text>
-                <Text style={styles.metaText}>{item.language === 'zh-CN' ? '??' : 'English'}</Text>
+                <Text style={styles.metaDivider}>•</Text>
+                <Text style={styles.metaText}>{item.language === 'zh-CN' ? '中文' : 'English'}</Text>
               </View>
 
               {scene ? (
                 <View style={styles.goalCard}>
-                  <Text style={styles.goalLabel}>????</Text>
+                  <Text style={styles.goalLabel}>场景目标</Text>
                   <Text style={styles.goalText}>{scene.goal}</Text>
                 </View>
               ) : null}
